@@ -1,21 +1,42 @@
 // =============================================================================
 // WaveRogue - ui_manager.h
 //
-// Minimal menu + scrolling log UI for the Cardputer's 240x135 TFT, driven by
-// its built-in keyboard. Kept deliberately dumb (no animations, no icons) so
-// it stays legible at this resolution and easy to extend.
+// Menu + scrolling log UI for the Cardputer's 240x135 TFT, driven by its
+// built-in keyboard. The tool now has 16 leaf modules, too many for one
+// flat screen, so navigation is two levels deep:
+//
+//   MENU_TOP  -->  MENU_LORA or MENU_SUBGHZ  -->  a leaf module
+//
+// Both the top menu and the two category submenus are rendered by the same
+// generic, scrollable pollListMenu() widget.
 // =============================================================================
 #pragma once
 #include <Arduino.h>
 
 enum class AppState {
-    MENU = 0,
-    MODULE_LORA_SNIFFER,
-    MODULE_LORA_WARDRIVE,
-    MODULE_LORA_ROGUE_GW,
-    MODULE_SUBGHZ_SNIFFER,
-    MODULE_SUBGHZ_REPLAY,
-    MODULE_COUNT
+    MENU_TOP = 0,
+    MENU_LORA,
+    MENU_SUBGHZ,
+
+    // ---- LoRa leaf modules ----
+    LORA_SNIFFER,           // Module: LoRaWAN Sniffer & Meta-Analyzer
+    LORA_WARDRIVE,          // Module: LoRa Wardriving & Heat-Mapper
+    LORA_ROGUE_GW,          // Module: Rogue LoRa Gateway Emulator (Honeypot)
+    LORA_DEVADDR_SCAN,      // Module: DevAddr Mapper (Device Address Scanner)
+    LORA_NETID_ID,          // Module: NetID Extractor (Provider Identifier)
+    LORA_BEACON_SCAN,       // Module: Class-B Gateway Beacon Scanner
+    LORA_PLAINTEXT_DETECT,  // Module: Plaintext/Weak-Crypto Payload Detector
+    LORA_GWMP_SNIFF,        // Module: Gateway Backhaul (GWMP) Metadata Extractor
+
+    // ---- Sub-GHz leaf modules ----
+    SUBGHZ_SNIFFER,          // Module: Raw Sniffer & Protocol Analyzer (OOK/ASK)
+    SUBGHZ_REPLAY,           // Module: Replay Vulnerability Tester
+    SUBGHZ_STATIC_CODE,      // Module: Static-Code Legacy System Discovery
+    SUBGHZ_WEATHER_TPMS,     // Module: Weather/TPMS Telemetry Decoder
+    SUBGHZ_WMBUS_SCAN,       // Module: Wireless M-Bus Smart Meter Scanner
+    SUBGHZ_BUG_DETECT,       // Module: Analog Bug / Carrier Detector
+    SUBGHZ_POCSAG_SCAN,      // Module: POCSAG/FLEX Pager Scanner
+    SUBGHZ_SYNCWORD_ANALYZER // Module: Preamble/Sync-Word Analyzer
 };
 
 // Keys used for navigation. The Cardputer keyboard has no dedicated arrow
@@ -27,25 +48,31 @@ namespace UIKeys {
     constexpr char DOWN   = '.';
     constexpr char LEFT   = ',';
     constexpr char RIGHT  = '/';
-    constexpr char BACK   = '`';   // acts as "ESC" -> return to main menu
+    constexpr char BACK   = '`';   // acts as "ESC" -> go up one menu level
 }
 
 namespace UIManager {
+    // One-time hardware bring-up (display + keyboard). Call once in setup().
     void begin();
 
-    // Main menu: returns the newly selected AppState once the user presses
-    // Enter, or AppState::MENU if still browsing (call every loop() while
-    // in the MENU state).
-    AppState pollMenu();
+    // Reads the keyboard exactly once. Call this ONE time per loop()
+    // iteration, before any of the query functions below or pollListMenu().
+    void pollInput();
 
-    // Returns true if the user pressed the BACK/ESC key this poll - modules
-    // should check this every iteration of their own loop and, if true,
-    // clean up and return control to main.cpp so it can go back to MENU.
-    bool backPressed();
+    bool isUp();
+    bool isDown();
+    bool isEnter();
+    bool isBack();
 
-    // Returns true once (edge-triggered) if Enter/Return was pressed - used
-    // by Module 5 to trigger a replay transmission on demand.
-    bool enterPressed();
+    // Call when (re-)entering any list menu (top menu, a category submenu)
+    // so it redraws from scratch with the selection reset to the top.
+    void resetMenu();
+
+    // Generic scrollable menu widget. `title` is only used for the header
+    // text - selection/scroll state is a single shared instance reset via
+    // resetMenu(), since only one list menu is ever visible at a time.
+    // Returns the selected index once Enter is pressed, otherwise -1.
+    int pollListMenu(const char* title, const char* const* items, int count);
 
     void drawHeader(const char* title);
     void printLine(const String& line);   // appends a line to the scrolling log area

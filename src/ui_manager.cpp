@@ -2,43 +2,22 @@
 #include <M5Cardputer.h>
 
 namespace {
-    const char* kMenuItems[] = {
-        "1. LoRaWAN Sniffer",
-        "2. LoRa Wardriver (GPS+SD)",
-        "3. Rogue LoRa GW (Honeypot)",
-        "4. Sub-GHz Sniffer (OOK/ASK)",
-        "5. Sub-GHz Replay Tester",
-    };
-    constexpr int kMenuCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+    // ---- Keyboard state, captured once per loop() tick by pollInput() ----
+    bool hadChange = false;
+    Keyboard_Class::KeysState keys;
 
-    int selectedIndex = 0;
+    bool wordHas(char c) {
+        if (!hadChange) return false;
+        for (auto k : keys.word) {
+            if (k == c) return true;
+        }
+        return false;
+    }
 
-    // Scrolling log buffer for module screens.
+    // ---- Scrolling log buffer for module screens ----
     constexpr int kMaxLogLines = 8;
     String logLines[kMaxLogLines];
     int logCount = 0;
-
-    void redrawMenu() {
-        auto& d = M5Cardputer.Display;
-        d.fillScreen(TFT_BLACK);
-        d.setTextColor(TFT_GREEN, TFT_BLACK);
-        d.setTextSize(1);
-        d.setCursor(4, 2);
-        d.println("WaveRogue - RF Auditor");
-        d.drawFastHLine(0, 12, d.width(), TFT_DARKGREY);
-
-        for (int i = 0; i < kMenuCount; i++) {
-            int y = 18 + i * 20;
-            if (i == selectedIndex) {
-                d.fillRect(0, y - 2, d.width(), 18, TFT_DARKGREEN);
-                d.setTextColor(TFT_WHITE, TFT_DARKGREEN);
-            } else {
-                d.setTextColor(TFT_GREEN, TFT_BLACK);
-            }
-            d.setCursor(6, y);
-            d.println(kMenuItems[i]);
-        }
-    }
 
     void redrawLog() {
         auto& d = M5Cardputer.Display;
@@ -51,6 +30,48 @@ namespace {
             d.println(logLines[i]);
         }
     }
+
+    // ---- Generic scrollable list menu state ----
+    constexpr int kVisibleRows = 6;
+    constexpr int kRowHeight = 17;
+    int selIndex = 0;
+    int scrollOffset = 0;
+    bool menuNeedsRedraw = true;
+
+    void redrawListMenu(const char* title, const char* const* items, int count) {
+        auto& d = M5Cardputer.Display;
+        d.fillScreen(TFT_BLACK);
+        d.setTextColor(TFT_CYAN, TFT_BLACK);
+        d.setTextSize(1);
+        d.setCursor(4, 2);
+        d.println(title);
+        d.drawFastHLine(0, 12, d.width(), TFT_DARKGREY);
+
+        for (int row = 0; row < kVisibleRows; row++) {
+            int i = scrollOffset + row;
+            if (i >= count) break;
+            int y = 15 + row * kRowHeight;
+            if (i == selIndex) {
+                d.fillRect(0, y, d.width(), kRowHeight - 1, TFT_DARKGREEN);
+                d.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+            } else {
+                d.setTextColor(TFT_GREEN, TFT_BLACK);
+            }
+            d.setCursor(6, y + 3);
+            d.println(items[i]);
+        }
+
+        // Scroll indicators.
+        d.setTextColor(TFT_YELLOW, TFT_BLACK);
+        if (scrollOffset > 0) {
+            d.setCursor(d.width() - 10, 15);
+            d.print("^");
+        }
+        if (scrollOffset + kVisibleRows < count) {
+            d.setCursor(d.width() - 10, d.height() - 12);
+            d.print("v");
+        }
+    }
 }
 
 void UIManager::begin() {
@@ -58,62 +79,53 @@ void UIManager::begin() {
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Display.setRotation(1);
     M5Cardputer.Display.setTextSize(1);
-    redrawMenu();
 }
 
-AppState UIManager::pollMenu() {
+void UIManager::pollInput() {
     M5Cardputer.update();
-    if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed()) {
-        return AppState::MENU;
+    hadChange = M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed();
+    if (hadChange) {
+        keys = M5Cardputer.Keyboard.keysState();
+    }
+}
+
+bool UIManager::isUp()    { return wordHas(UIKeys::UP); }
+bool UIManager::isDown()  { return wordHas(UIKeys::DOWN); }
+bool UIManager::isBack()  { return wordHas(UIKeys::BACK); }
+bool UIManager::isEnter() { return hadChange && keys.enter; }
+
+void UIManager::resetMenu() {
+    selIndex = 0;
+    scrollOffset = 0;
+    menuNeedsRedraw = true;
+}
+
+int UIManager::pollListMenu(const char* title, const char* const* items, int count) {
+    bool changed = menuNeedsRedraw;
+    menuNeedsRedraw = false;
+
+    if (isUp() && count > 0) {
+        selIndex = (selIndex - 1 + count) % count;
+        changed = true;
+    } else if (isDown() && count > 0) {
+        selIndex = (selIndex + 1) % count;
+        changed = true;
     }
 
-    Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
-    bool changed = false;
-
-    for (auto c : status.word) {
-        if (c == UIKeys::UP) {
-            selectedIndex = (selectedIndex - 1 + kMenuCount) % kMenuCount;
-            changed = true;
-        } else if (c == UIKeys::DOWN) {
-            selectedIndex = (selectedIndex + 1) % kMenuCount;
-            changed = true;
-        }
+    if (selIndex < scrollOffset) {
+        scrollOffset = selIndex;
+    } else if (selIndex >= scrollOffset + kVisibleRows) {
+        scrollOffset = selIndex - kVisibleRows + 1;
     }
 
     if (changed) {
-        redrawMenu();
+        redrawListMenu(title, items, count);
     }
 
-    if (status.enter) {
-        // AppState::MENU == 0, module states start at 1.
-        return static_cast<AppState>(selectedIndex + 1);
+    if (isEnter() && count > 0) {
+        return selIndex;
     }
-
-    return AppState::MENU;
-}
-
-bool UIManager::backPressed() {
-    M5Cardputer.update();
-    if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed()) {
-        return false;
-    }
-    Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
-    for (auto c : status.word) {
-        if (c == UIKeys::BACK) return true;
-    }
-    return false;
-}
-
-bool UIManager::enterPressed() {
-    // NOTE: does not call M5Cardputer.update() itself - callers typically
-    // already polled backPressed()/keyboard this cycle. Modules that only
-    // need Enter (no back-check in the same tick) should call
-    // M5Cardputer.update() before this.
-    if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed()) {
-        return false;
-    }
-    Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
-    return status.enter;
+    return -1;
 }
 
 void UIManager::drawHeader(const char* title) {

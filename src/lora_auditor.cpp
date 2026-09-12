@@ -2,6 +2,7 @@
 #include "config.h"
 #include "ui_manager.h"
 #include "gps_logger.h"
+#include "lora_inventory.h"
 #include <RadioLib.h>
 #include <SD.h>
 #include <SPI.h>
@@ -59,6 +60,41 @@ namespace {
         return String(buf);
     }
 
+    // Parsed view of a LoRaWAN data-frame FHDR, shared by every module that
+    // needs DevAddr/FCnt/FRMPayload (the sniffer, wardriver, DevAddr
+    // Mapper, NetID Extractor and Plaintext Detector all go through this).
+    struct DataFrameFields {
+        uint32_t devAddr;
+        uint16_t fcnt;
+        const uint8_t* frmPayload; // may be nullptr if there is none
+        size_t frmLen;
+    };
+
+    // FHDR = DevAddr(4) + FCtrl(1) + FCnt(2) [+ FOpts(0-15)], followed by an
+    // optional 1-byte FPort and then FRMPayload, with a 4-byte MIC at the
+    // very end. Returns false if `len` is too short to be a valid frame.
+    bool parseDataFrame(const uint8_t* data, size_t len, DataFrameFields& out) {
+        if (len < 8 + 4) return false; // FHDR(min 8) + MIC(4)
+        out.devAddr = readLE32(&data[1]);
+        uint8_t fctrl = data[5];
+        out.fcnt = readLE16(&data[6]);
+        uint8_t foptsLen = fctrl & 0x0F;
+
+        size_t fhdrEnd = 8 + foptsLen;
+        size_t micStart = len - 4;
+        out.frmPayload = nullptr;
+        out.frmLen = 0;
+        if (fhdrEnd < micStart) {
+            // There's at least an FPort byte; FRMPayload (if any) follows it.
+            size_t payloadStart = fhdrEnd + 1;
+            if (payloadStart <= micStart) {
+                out.frmPayload = &data[payloadStart];
+                out.frmLen = micStart - payloadStart;
+            }
+        }
+        return true;
+    }
+
     // Decodes one raw LoRa PHY frame as a LoRaWAN frame and prints/logs it.
     // `logGeo` / `logRogue` select which (if any) CSV sink also receives it.
     void handleFrame(const uint8_t* data, size_t len, float rssi, float snr) {
@@ -91,33 +127,32 @@ namespace {
         }
 
         // Data frame (uplink/downlink): FHDR starts right after MHDR.
-        // FHDR = DevAddr(4) + FCtrl(1) + FCnt(2) [+ FOpts(0-15)]
-        if (len < 8) {
+        DataFrameFields f;
+        if (!parseDataFrame(data, len, f)) {
             UIManager::printLine("[!] Malformed data frame (len=" + String(len) + ")");
             return;
         }
-        uint32_t devAddr = readLE32(&data[1]);
-        uint8_t fctrl = data[5];
-        uint16_t fcnt = readLE16(&data[6]);
-        uint8_t foptsLen = fctrl & 0x0F;
-        (void)foptsLen; // parsed but not displayed - present for further extension
 
         char devAddrStr[9];
-        snprintf(devAddrStr, sizeof(devAddrStr), "%08lX", (unsigned long)devAddr);
+        snprintf(devAddrStr, sizeof(devAddrStr), "%08lX", (unsigned long)f.devAddr);
 
         UIManager::printLine(String(mtype));
-        UIManager::printLine("DevAddr:" + String(devAddrStr) + " FCnt:" + String(fcnt));
+        UIManager::printLine("DevAddr:" + String(devAddrStr) + " FCnt:" + String(f.fcnt));
         UIManager::printLine("RSSI:" + String(rssi, 0) + " SNR:" + String(snr, 1));
-        // NOTE: FRMPayload (the actual application data) begins after FHDR
-        // (+FPort). We deliberately do NOT attempt to touch it: it is
-        // AES-128-CTR encrypted with the session's AppSKey, which is never
-        // transmitted over the air and cannot be recovered by sniffing.
+        // NOTE: FRMPayload (the actual application data) is only ever fed
+        // into LoraInventory's entropy heuristic below, never decoded: it
+        // is AES-128-CTR encrypted with the session's AppSKey, which is
+        // never transmitted over the air and cannot be recovered by
+        // sniffing. A LOW entropy score is what tells us it probably
+        // *isn't* properly encrypted in the first place (see Module:
+        // Plaintext Payload Detector).
+        LoraInventory::record(f.devAddr, rssi, snr, f.frmPayload, f.frmLen);
 
         if (wardriveFile) {
             wardriveFile.printf("%s,%.6f,%.6f,%08lX,%u,%.1f,%.1f,%s\n",
                                  GpsLogger::timeString().c_str(),
                                  GpsLogger::latitude(), GpsLogger::longitude(),
-                                 (unsigned long)devAddr, fcnt, rssi, snr, mtype);
+                                 (unsigned long)f.devAddr, f.fcnt, rssi, snr, mtype);
             wardriveFile.flush();
         }
     }
@@ -226,3 +261,123 @@ void LoraAuditor::rogueGatewayLoop() {
 void LoraAuditor::rogueGatewayEnd() {
     if (rogueGwFile) rogueGwFile.close();
 }
+
+// ------------------- DevAddr Mapper / NetID / Plaintext Detector ---------
+//
+// All three modules share one radio-polling routine and the LoraInventory
+// backend; they only differ in how they render the table.
+
+namespace {
+    uint32_t lastInventoryRedraw = 0;
+
+    // Receives one frame (if any) and, if it's a data frame, records it
+    // into the shared inventory. Returns true iff a frame was recorded.
+    bool pollInventoryOnce() {
+        int state = radio.receive(frameBuf, kMaxFrameLen);
+        if (state != RADIOLIB_ERR_NONE) return false;
+        size_t len = radio.getPacketLength();
+        if (len < 1 || isJoinRequest(frameBuf[0])) return false;
+
+        DataFrameFields f;
+        if (!parseDataFrame(frameBuf, len, f)) return false;
+        LoraInventory::record(f.devAddr, radio.getRSSI(), radio.getSNR(), f.frmPayload, f.frmLen);
+        return true;
+    }
+
+    void redrawDevAddrTable() {
+        UIManager::clearLog();
+        int n = LoraInventory::count();
+        UIManager::printLine("Devices seen: " + String(n));
+        for (int i = 0; i < n && i < 7; i++) {
+            const auto* e = LoraInventory::entryByRecency(i);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%08lX x%-3lu %.0fdBm",
+                     (unsigned long)e->devAddr, (unsigned long)e->seenCount, e->lastRssi);
+            UIManager::printLine(String(buf));
+        }
+    }
+
+    void redrawNetIdTable() {
+        UIManager::clearLog();
+        int n = LoraInventory::count();
+        if (n == 0) {
+            UIManager::printLine("No devices heard yet...");
+            return;
+        }
+        for (int i = 0; i < n && i < 4; i++) {
+            const auto* e = LoraInventory::entryByRecency(i);
+            LoraInventory::NetIdGuess guess = LoraInventory::identifyNetwork(e->devAddr);
+            char addrBuf[10];
+            snprintf(addrBuf, sizeof(addrBuf), "%08lX:", (unsigned long)e->devAddr);
+            UIManager::printLine(String(addrBuf));
+            UIManager::printLine(guess.name);
+        }
+    }
+
+    void redrawPlaintextTable() {
+        UIManager::clearLog();
+        int n = LoraInventory::count();
+        int shown = 0;
+        for (int i = 0; i < n; i++) {
+            const auto* e = LoraInventory::entryByRecency(i);
+            if (!e->flaggedPlaintext) continue;
+            char buf[40];
+            snprintf(buf, sizeof(buf), "%08lX H=%.1f/8 !!", (unsigned long)e->devAddr, e->lastPayloadEntropy);
+            UIManager::printLine(String(buf));
+            shown++;
+            if (shown >= 7) break;
+        }
+        if (shown == 0) {
+            UIManager::printLine(n == 0 ? "No devices heard yet..." : "No low-entropy payloads");
+            if (n > 0) UIManager::printLine("seen so far (good sign)");
+        }
+    }
+} // namespace
+
+void LoraAuditor::devAddrScanBegin() {
+    LoraInventory::reset();
+    lastInventoryRedraw = 0;
+    UIManager::printLine("Building device inventory...");
+}
+
+void LoraAuditor::devAddrScanLoop() {
+    bool got = pollInventoryOnce();
+    if (got || millis() - lastInventoryRedraw > 600) {
+        lastInventoryRedraw = millis();
+        redrawDevAddrTable();
+    }
+}
+
+void LoraAuditor::devAddrScanEnd() {}
+
+void LoraAuditor::netIdScanBegin() {
+    LoraInventory::reset();
+    lastInventoryRedraw = 0;
+    UIManager::printLine("Identifying networks...");
+}
+
+void LoraAuditor::netIdScanLoop() {
+    bool got = pollInventoryOnce();
+    if (got || millis() - lastInventoryRedraw > 800) {
+        lastInventoryRedraw = millis();
+        redrawNetIdTable();
+    }
+}
+
+void LoraAuditor::netIdScanEnd() {}
+
+void LoraAuditor::plaintextScanBegin() {
+    LoraInventory::reset();
+    lastInventoryRedraw = 0;
+    UIManager::printLine("Scanning payload entropy...");
+}
+
+void LoraAuditor::plaintextScanLoop() {
+    bool got = pollInventoryOnce();
+    if (got || millis() - lastInventoryRedraw > 800) {
+        lastInventoryRedraw = millis();
+        redrawPlaintextTable();
+    }
+}
+
+void LoraAuditor::plaintextScanEnd() {}

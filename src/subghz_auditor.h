@@ -30,6 +30,6 @@ namespace SubGhzAuditor {
     // Module 5: record-then-replay workflow.
     void replayBegin();
     void replayLoop();     // call every tick; records automatically,
-                            // and replays when UIManager::enterPressed()
+                            // and replays when UIManager::isEnter()
     void replayEnd();
 }

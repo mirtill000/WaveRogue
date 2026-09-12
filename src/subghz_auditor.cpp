@@ -158,7 +158,7 @@ void SubGhzAuditor::replayLoop() {
         UIManager::printLine("Captured " + String(recordedCount) + " pulses, ready.");
     }
 
-    if (UIManager::enterPressed() && recordedCount > 0) {
+    if (UIManager::isEnter() && recordedCount > 0) {
         UIManager::printLine("Replaying " + String(recordedCount) + " pulses...");
 
         // Switch out of RX direct mode into TX direct mode, then bit-bang
