@@ -6,10 +6,9 @@
 #include <SD.h>
 #include <string.h>
 
-// M5Unified.h must come first: wiring/m5_unit_unified_wiring.hpp uses the
-// global M5 object (M5.getBoard()/M5.getPin()) and m5::board_t but never
-// includes M5Unified.h itself - it expects the includer to have already
-// brought it in (matching M5's own official CapCC1101NFC example).
+// M5Unified.h must come first: wiring/m5_unit_unified_wiring.hpp calls
+// M5.getBoard()/M5.getPin() but doesn't include M5Unified.h itself - it
+// expects the includer to have already done so.
 #include <M5Unified.h>
 #include <M5UnitUnified.h>
 #include <M5UnitUnifiedNFC.h>
@@ -23,15 +22,15 @@ using m5::nfc::a::mifare::classic::get_sector_trailer_block_from_sector;
 
 namespace {
     m5::unit::UnitUnified Units;
-    // CapCC1101NFC's default CS (G6) already matches NFC_CS_PIN - passed
-    // explicitly anyway (see config.h) so this is the one place to
-    // change it if a future unit's wiring differs.
     m5::unit::CapCC1101NFC unit{NFC_CS_PIN};
     m5::nfc::NFCLayerA nfc_a{unit};
 
     bool sdReady = false;
-    // Guards against re-running the whole ST25R3916 bring-up sequence on
-    // every menu re-entry - see the comment in NfcReader::begin().
+    // The ST25R3916's full bring-up (chip-ID detection, CMD_SET_DEFAULT,
+    // oscillator enable, RF field on) only tolerates running once per
+    // boot - calling Units.begin() again on an already-initialized chip
+    // with its field already on makes it fail. Re-entering the module
+    // after a successful init just resumes polling instead.
     bool chipInitialized = false;
 
     // -------------------------------------------------------------------
@@ -197,49 +196,30 @@ namespace {
 
 bool NfcReader::begin() {
     if (chipInitialized) {
-        // Re-entering the module after a previous successful init this
-        // boot. Units.begin() runs the ST25R3916's whole bring-up
-        // sequence again (chip-ID retry loop, CMD_SET_DEFAULT, oscillator
-        // enable, RF field on, ...) - calling it a second time on an
-        // already-initialized chip with its RF field already on is what
-        // caused "works once right after power-on, fails on every visit
-        // after that". Only bring the chip up once per boot; subsequent
-        // entries just resume polling.
         UIManager::printLine("ST25R3916 already initialized");
         UIManager::printLine("Present an NFC-A tag/badge");
         return true;
     }
 
-    // M5Stack's own CapCC1101 driver documents a POWER_EN line on this
-    // pin for the ST25R3916 front-end but never actually drives it
-    // itself (confirmed by reading their unit_ST25R3916.cpp source) -
-    // presumably because the board's own bring-up (M5Cardputer.begin(),
-    // already called once at boot in UIManager::begin()) already leaves
-    // it in a working state. Driving it HIGH here too is harmless and
-    // was empirically necessary for an earlier, standalone ST25R3916
-    // driver attempt on this same hardware, so keep it as a cheap safety
-    // net.
+    // POWER_EN: harmless to drive even though board bring-up (M5Cardputer
+    // .begin(), already called once at boot) is expected to leave it
+    // usable on its own - cheap insurance either way.
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
 
-    // M5UnitUnified's SPI adapter (adapter_spi.cpp) only ever manages its
-    // OWN CS pin around a transaction - it never touches the CC1101's CS
-    // (SUBGHZ_CS_PIN), even though both chips share this SPI bus. If that
-    // line is left floating or asserted low from a previous state, the
-    // CC1101 can contend on the shared MISO line during every NFC
-    // transaction. Explicitly deselect it before touching the NFC chip.
+    // The Cap CC1101 board carries both the CC1101 and the ST25R3916 on
+    // one SPI bus, on separate CS lines. M5UnitUnified's SPI adapter only
+    // ever manages its own CS around a transaction - it never deselects
+    // the CC1101 - so do that explicitly before touching the NFC chip.
     pinMode(SUBGHZ_CS_PIN, OUTPUT);
     digitalWrite(SUBGHZ_CS_PIN, HIGH);
 
-    // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
-    // CapCC1101NFC setup. addSPI() resolves the shared Cap-Bus SPI pins
-    // (SCK/MOSI/MISO) itself via M5Unified's board profile
-    // (M5.getBoard()/M5.getPin()); the unit's CS is passed explicitly
-    // above (NFC_CS_PIN) rather than trusting the library's default.
-    // Print what addSPI() resolved so a failure here is diagnosable
-    // instead of a bare "init failed". See README's NFC Tools section
-    // for the full debugging history behind these specific pin/deselect
-    // choices.
+    // addSPI() resolves the shared Cap-Bus SPI pins (SCK/MOSI/MISO)
+    // itself via M5Unified's board profile; the unit's CS is passed
+    // explicitly via its constructor above (NFC_CS_PIN) rather than
+    // trusting the library's own default. Report what got resolved and
+    // where init failed, since a bare "init failed" isn't actionable on
+    // this shared-bus, multi-library-dependent hardware.
     auto spiPinInfo = m5::unit::wiring::spiPins();
     UIManager::printLine("Board: 0x" + String((unsigned)M5.getBoard(), HEX));
     UIManager::printLine("SPI: sck=" + String(spiPinInfo.sclk) + " miso=" + String(spiPinInfo.miso) +

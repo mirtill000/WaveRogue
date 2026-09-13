@@ -79,19 +79,6 @@
 // path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
 // is NOT selectable on this module - see subghz_rf_switch.cpp.
 // -----------------------------------------------------------------------
-// REVERTED back to 5. The Cap CC1101's own printed silkscreen label
-// (read as CC_CS=G6/NFC_CS=G5) turned out to conflict with TWO
-// independent, real-hardware-tested sources: M5's own M5UnitUnified
-// source (hardcodes PIN_CS_ST25R3916=6/PIN_CS_CC1101=5) and a
-// third-party Cardputer firmware
-// (github.com/7h30th3r0n3/Evil-M5Project, a from-scratch driver with
-// no dependency on either of the above) that the user confirms reads
-// NFC correctly, using the exact same CC_CS=5/NFC_CS=6 this project
-// started with. CS=6 making RadioLib's CC1101.begin() report success
-// was most likely a false positive - its chip-version check is not
-// exhaustive, and Sub-GHz Tools > Raw Sniffer/Band Scanner still
-// couldn't actually receive a real 433.92MHz transmission at CS=6,
-// consistent with radio.begin() having validated the wrong chip.
 #define SUBGHZ_CS_PIN      5
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
 #define SUBGHZ_RF_SW0_PIN  13   // CC1101_RF_SW0 - antenna band select (see subghz_rf_switch.h)
@@ -108,23 +95,15 @@
 // sharing the SAME SPI bus (SCK/MOSI/MISO) as the CC1101 above, on its
 // own CS and IRQ (G4) lines. Driven via M5Stack's own M5UnitUnified +
 // M5Unit-NFC stack (m5::unit::CapCC1101NFC), whose wiring::addSPI()
-// helper already knows the shared bus pins. G6, matching both M5's own
-// hardcoded default and github.com/7h30th3r0n3/Evil-M5Project's
-// independently-written, user-confirmed-working NFC_CS=6 - see the
-// SUBGHZ_CS_PIN comment above for why the printed-label-based swap to 5
-// was reverted. Passed explicitly to CapCC1101NFC's constructor anyway
-// (rather than relying on the library's own default) so this macro is
-// the one place to change it if a future unit's wiring differs.
+// helper already knows the shared bus pins. Passed explicitly to
+// CapCC1101NFC's constructor in nfc_reader.cpp rather than relying on
+// the library's own default, so this macro is the one place to change
+// it if a future unit's wiring differs.
 // -----------------------------------------------------------------------
 #define NFC_CS_PIN 6
-// M5Stack's own CapCC1101 driver declares a POWER_EN line on this pin
-// for the ST25R3916, numerically matching LORA_RST_PIN above - not a
-// conflict, since the LoRa and CC1101 caps are physically mutually
-// exclusive on the same Cap-Bus connector. Their own driver never
-// actually drives it (board bring-up likely already leaves it usable),
-// but it was empirically necessary to get the chip responding at all
-// during an earlier, standalone ST25R3916 driver attempt on this same
-// hardware, so nfc_reader.cpp still drives it as a cheap safety net.
+// POWER_EN for the ST25R3916, numerically matching LORA_RST_PIN above -
+// not a conflict, since the LoRa and CC1101 caps are physically mutually
+// exclusive on the same Cap-Bus connector.
 #define NFC_POWER_EN_PIN 3
 // Where per-tag dumps are saved (one file per UID, re-scanning updates it).
 #define NFC_DUMP_DIR "/nfc"

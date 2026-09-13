@@ -1,14 +1,12 @@
 // =============================================================================
 // WaveRogue - nfc_reader.h
 //
-// NFC Reader/Writer + Mifare Classic default-key auditor.
+// NFC Reader/Writer + MIFARE Classic default-key auditor.
 //
-// Uses the ST25R3916 NFC front-end that ships on the Cap CC1101 module
-// (same Cap-Bus slot/SPI bus as the CC1101, separate CS/IRQ - see
-// config.h), driven through M5Stack's own official M5UnitUnified +
-// M5Unit-NFC stack (m5::unit::CapCC1101NFC + m5::nfc::NFCLayerA) rather
-// than a standalone ST25R3916 Arduino library - see platformio.ini and
-// README.md's "NFC Tools" section for why.
+// Drives the ST25R3916 NFC front-end on the Cap CC1101 module (shares the
+// Cap-Bus SPI bus with the CC1101, separate CS/IRQ) via M5Stack's own
+// M5UnitUnified + M5Unit-NFC stack. See platformio.ini and README.md's
+// "NFC Tools" section for the dependency and hardware notes.
 //
 // Flow, on every tag presented:
 //   1. Poll for an NFC-A tag; report UID/ATQA/SAK/type.

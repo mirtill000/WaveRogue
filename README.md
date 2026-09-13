@@ -294,63 +294,28 @@ src/
    that resists every key in it is *not* proven secure, only not
    trivially default-keyed.
 
-   **Why M5UnitUnified instead of a standalone ST25R3916 library, and
-   the debugging history:** the first version of this module was built
-   on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
-   ([wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916)),
-   vendored directly into `lib/`. It never got the chip to answer through
-   RFAL's own init - `ERR_HW_MISMATCH` reading `IC_IDENTITY` back as
-   `0x00`, every time, despite matching M5's own official CapCC1101
-   driver step for step (`POWER_EN` HIGH, a defensive `CMD_STOP` before
-   `CMD_SET_DEFAULT`, a chip-ID retry loop, matching SPI settings). The
-   module was migrated to M5's own official M5UnitUnified + M5Unit-NFC
-   stack, which *also* failed to detect the chip, regardless of SPI clock
-   speed (10 MHz vs. 1 MHz - ruling out signal integrity).
+   **Two hardware quirks this module works around**, both worth knowing
+   if you're porting it to different Cap CC1101 wiring:
 
-   A CS pin mixup was investigated and ruled back out along the way: the
-   Cap CC1101 module's own printed silkscreen label reads `CC_CS=G6`,
-   `NFC_CS=G5` - the opposite of what this project originally assumed.
-   Swapping to match the label made `radio.begin()` for the CC1101
-   report success for the first time - but that likely wasn't real:
-   Sub-GHz Tools' Raw Sniffer/Band Scanner still couldn't receive an
-   actual 433.92MHz transmission at that CS value, and a **second**
-   independent source - the third-party
-   [Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project)
-   Cardputer firmware (a from-scratch driver with no dependency on
-   either RFAL or M5UnitUnified, confirmed by its author/users to read
-   NFC correctly on this same hardware) - uses `CC_CS=5`/`NFC_CS=6`,
-   agreeing with M5's own hardcoded source
-   (`PIN_CS_ST25R3916=6`/`PIN_CS_CC1101=5`) and this project's original
-   wiring. Two independent, hardware-tested sources beat one photographed
-   label with an easy-to-misread column layout - `SUBGHZ_CS_PIN`/
-   `NFC_CS_PIN` are back to 5/6.
+   1. The CC1101 and ST25R3916 share one SPI bus but M5UnitUnified's own
+      SPI adapter only ever manages its own chip's CS - it never
+      deselects the *other* chip on the bus. `NfcReader::begin()`
+      explicitly drives the CC1101's CS (`SUBGHZ_CS_PIN`) HIGH before
+      touching the NFC chip at all.
+   2. The ST25R3916's full bring-up (chip detection, reset, oscillator
+      enable, RF field on) only tolerates running once per boot -
+      calling `Units.begin()` again on an already-initialized chip with
+      its field already on makes detection fail. `NfcReader::begin()`
+      guards against this and only re-initializes once per boot;
+      re-entering the module afterwards just resumes polling.
 
-   With the pins settled, `Units.begin()` still fails
-   (`Not detected ST25R3916 03,06` in the serial log) - reading the
-   *same* `IC_IDENTITY` register that a raw, library-independent SPI
-   probe reads as a plausible ID. Comparing M5UnitUnified's low-level SPI
-   adapter (`adapter_spi.cpp`) against Evil-M5Project's own minimal
-   driver turned up a real gap: M5's adapter only ever manages its own
-   CS pin around a transaction and never deselects the CC1101, which
-   shares this SPI bus - Evil-M5Project's driver explicitly drives the
-   CC1101's CS HIGH before every single NFC SPI transaction. WaveRogue
-   now does the same (once, in `NfcReader::begin()`, before `addSPI()`)
-   as the next thing to test.
-
-   (Evil-M5Project's source itself carries no explicit license in its
-   repository, so its code was not copied here - only the general
-   shared-bus deselection technique, independently reimplemented, and
-   its pin assignments, used as a second data point against M5's own
-   hardcoded values.)
-
-   If you hit similar symptoms on a Cap CC1101 unit - inconsistent raw
-   register reads on the NFC side that don't match what a raw SPI probe
-   reads - cross-check against more than one source (the chip's own
-   datasheet, the module's official driver source, and if available a
-   second independent firmware) before trusting a single photographed
-   label; on shared-bus hardware like this, also check whether every
-   library involved actually deselects every *other* chip on the bus,
-   not just its own.
+   If `Units.begin()` still fails on your hardware, the module prints
+   the resolved board ID and SPI pins so a wiring mismatch is
+   diagnosable, and double-check `NFC_CS_PIN`/`SUBGHZ_CS_PIN` in
+   `config.h` against your Cap CC1101's actual CS assignments (these can
+   vary across hardware revisions - trust more than one source, e.g. the
+   chip's datasheet and the vendor driver's own hardcoded pins, over a
+   single label or reference if they disagree).
 
 ## Keyboard controls
 
