@@ -299,7 +299,26 @@ bool NfcReader::begin() {
     nfcSPI.endTransaction();
     UIManager::printLine("Manual SPI probe: 0x" + String(manualProbeId, HEX));
 
-    ReturnCode initErr = nfc.rfalNfcInitialize();
+    // rfalNfcInitialize() issues CMD_SET_DEFAULT (a soft reset) and then
+    // checks the chip ID almost immediately afterwards, with no settling
+    // delay in between. The manual probe above (which never resets the
+    // chip) reads back a valid ID - so a single post-reset check can
+    // apparently land inside the chip's reset window and read 0x00.
+    // M5's own official CapCC1101 driver defends against exactly this
+    // with a 5-attempt/20ms-apart chip-ID retry loop; do the same here
+    // by simply retrying the whole init call a few times.
+    ReturnCode initErr = ERR_NONE;
+    const int kInitAttempts = 5;
+    for (int attempt = 1; attempt <= kInitAttempts; ++attempt) {
+        initErr = nfc.rfalNfcInitialize();
+        if (initErr == ERR_NONE) {
+            if (attempt > 1) {
+                UIManager::printLine("ST25R3916 init ok (try " + String(attempt) + ")");
+            }
+            break;
+        }
+        delay(20);
+    }
     if (initErr != ERR_NONE) {
         UIManager::printLine("ST25R3916 init failed:");
         UIManager::printLine(String(returnCodeToString(initErr)) + " (" + String(initErr) + ")");

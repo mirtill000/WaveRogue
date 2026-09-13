@@ -311,20 +311,29 @@ src/
    point more at a driver/config mismatch than a wiring problem.
 
    If the module reports `ERR_HW_MISMATCH` with a raw `IC_IDENTITY`
-   register readout of `0x00` (chip completely silent, confirmed both via
-   RFAL and a manual library-independent SPI probe), the pin mapping
-   itself has already been cross-checked against M5Stack's own
-   (unreleased at the time of writing) `M5Unit-NFC` CapCC1101 driver and
-   matches exactly - so it isn't a config.h transcription error. That
-   driver also declares a `POWER_EN` line on G3 for the ST25R3916 (never
-   actually driven in M5's own code, so possibly vestigial or
-   hardware-defaulted-on) - WaveRogue now drives it HIGH before init as a
-   cheap, harmless attempt. If the chip still reads back all-zero after
-   that, the remaining likely causes are a hardware/soldering fault on the
-   Cap CC1101's NFC-specific lines, or a defective/DOA ST25R3916 front-end
-   on that particular unit - worth a continuity check with a multimeter
-   on G6/G4 between the Cap-Bus connector and the chip if you're
-   comfortable opening the module.
+   register readout of `0x00` (chip completely silent), two things fixed
+   this on the hardware this was diagnosed against:
+
+   1. **Power.** M5Stack's own (unreleased at the time of writing)
+      `M5Unit-NFC` CapCC1101 driver declares a `POWER_EN` line on G3 for
+      the ST25R3916 front-end. WaveRogue now drives it HIGH before init.
+      Without it the chip answered nothing at all, on any probe.
+   2. **A post-reset settling race.** RFAL's `rfalNfcInitialize()` issues
+      a soft-reset command (`CMD_SET_DEFAULT`) and checks the chip ID
+      almost immediately afterwards, with no delay in between - so a
+      single check can land inside the chip's reset window and read back
+      `0x00` even though the chip is otherwise fine (a plain register
+      read taken *before* any reset command succeeds). M5's own driver
+      defends against this with a 5-attempt/20ms-apart retry loop;
+      WaveRogue's `NfcReader::begin()` now does the same around the
+      whole `rfalNfcInitialize()` call, and logs which attempt it took.
+
+   If the chip still reads back all-zero on the very first *manual* SPI
+   probe (before any reset is even sent), the remaining likely causes are
+   a hardware/soldering fault on the Cap CC1101's NFC-specific lines, or
+   a defective/DOA ST25R3916 front-end on that particular unit - worth a
+   continuity check with a multimeter on G6/G4 between the Cap-Bus
+   connector and the chip if you're comfortable opening the module.
 
 ## Keyboard controls
 
