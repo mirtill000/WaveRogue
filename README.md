@@ -202,17 +202,21 @@ looking for activity:
   bug/transmitter rather than a remote or sensor.
 - **Generic PWM fixed-code decode** — every captured burst is run through
   a decoder for the short/long-pulse-with-sync-gap shape used by cheap
-  PT2262/EV1527-style remotes and their countless clones. A real remote
+  fixed-code remotes and their countless clones. PWM remotes don't all
+  use the same short:long pulse ratio, so each frame is tried against
+  both common public ratios - **~1:3** (Princeton/PT2262/EV1527-style)
+  and **~1:2** (Holtek HT12x / CAME-style gate-and-garage remotes) -
+  and whichever cleanly decodes the most bits wins. A real remote
   usually repeats the same frame several times per button press, so
   every sync-delimited frame *within* one capture is decoded on its own
   and cross-checked against its neighbor: two consecutive frames
   agreeing is reported as **repeat-confirmed** (marked with a trailing
-  `*`), a materially stronger signal than a single decode. The bit count
-  is also labeled against the two most common public fixed-code lengths
-  (24-bit PT2262/EV1527-family, 12-bit Holtek HT12x-family) - a
-  bit-count heuristic, not a full protocol fingerprint database. Anything
-  that doesn't fit this shape at all is kept and reported as unrecognized
-  raw data rather than forced into a decode.
+  `*`), a materially stronger signal than a single decode. The result is
+  then labeled against the matching ratio/bit-count range (24-bit
+  PT2262/EV1527-family, 12-bit Holtek/CAME-style, 32+-bit long
+  PT2262-style) - a coarse heuristic, not a full protocol fingerprint
+  database. Anything that doesn't fit either ratio at all is kept and
+  reported as unrecognized raw data rather than forced into a decode.
 - **Repeat / rolling-code detection** — each capture on a given channel is
   compared against recent captures on that *same* channel: an exact
   repeat across separate button presses means a static/fixed code

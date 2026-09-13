@@ -15,12 +15,15 @@
 //     press usually repeats the same code several times back-to-back) is
 //     decoded independently and cross-checked against its neighbor - two
 //     consecutive frames agreeing is reported as "repeat-confirmed",
-//     a much stronger signal than a single decode. The bit count is also
-//     classified against the two most common public fixed-code frame
-//     lengths (24-bit PT2262/EV1527-family, 12-bit Holtek HT12x-family)
-//     as a label, not a full protocol fingerprint. A pulse train that
-//     doesn't fit this shape at all is kept and reported as unrecognized
-//     raw data rather than forced into a decode.
+//     a much stronger signal than a single decode. Each frame is tried
+//     against both common public short:long pulse ratios (~1:3, the
+//     Princeton/PT2262/EV1527 shape, and ~1:2, the Holtek HT12x/CAME-
+//     style shape) and whichever decodes the most bits wins; the result
+//     is then labeled against the matching bit-count range (24-bit
+//     PT2262/EV1527-family, 12-bit Holtek/CAME-style, 32+-bit long
+//     PT2262-style) as a coarse hint, not a full protocol fingerprint.
+//     A pulse train that doesn't fit either ratio at all is kept and
+//     reported as unrecognized raw data rather than forced into a decode.
 //   - Each capture on a given channel is compared against recent history
 //     on that same channel: an exact repeat across separate button
 //     presses flags a static/fixed code (100% replay-vulnerable); a
