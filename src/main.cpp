@@ -21,6 +21,7 @@
 #include "subghz_bug_detector.h"
 #include "subghz_pocsag_scanner.h"
 #include "subghz_syncword_analyzer.h"
+#include "subghz_band_scanner.h"
 #include "nfc_reader.h"
 
 namespace {
@@ -58,12 +59,14 @@ namespace {
         "6. Analog Bug Detector",
         "7. POCSAG Pager Scanner",
         "8. Sync-Word Analyzer",
+        "9. Band Scanner (Multi-Freq)",
     };
     const AppState kSubghzModuleStates[] = {
         AppState::SUBGHZ_SNIFFER,      AppState::SUBGHZ_REPLAY,
         AppState::SUBGHZ_STATIC_CODE,  AppState::SUBGHZ_WEATHER_TPMS,
         AppState::SUBGHZ_WMBUS_SCAN,   AppState::SUBGHZ_BUG_DETECT,
         AppState::SUBGHZ_POCSAG_SCAN,  AppState::SUBGHZ_SYNCWORD_ANALYZER,
+        AppState::SUBGHZ_BAND_SCANNER,
     };
     constexpr int kSubghzMenuCount = sizeof(kSubghzMenuItems) / sizeof(kSubghzMenuItems[0]);
 
@@ -170,6 +173,10 @@ namespace {
                 UIManager::drawHeader("Sync-Word Analyzer");
                 SubGhzSyncwordAnalyzer::begin();
                 break;
+            case AppState::SUBGHZ_BAND_SCANNER:
+                UIManager::drawHeader("Band Scanner");
+                SubGhzBandScanner::begin();
+                break;
 
             case AppState::NFC_READER:
                 UIManager::drawHeader("NFC Reader/Writer");
@@ -228,6 +235,9 @@ namespace {
             case AppState::SUBGHZ_SYNCWORD_ANALYZER:
                 SubGhzSyncwordAnalyzer::end();
                 break;
+            case AppState::SUBGHZ_BAND_SCANNER:
+                SubGhzBandScanner::end();
+                break;
 
             case AppState::NFC_READER:
                 NfcReader::end();
@@ -256,6 +266,7 @@ namespace {
             case AppState::SUBGHZ_BUG_DETECT:        SubGhzBugDetector::loop(); break;
             case AppState::SUBGHZ_POCSAG_SCAN:       SubGhzPocsagScanner::loop(); break;
             case AppState::SUBGHZ_SYNCWORD_ANALYZER: SubGhzSyncwordAnalyzer::loop(); break;
+            case AppState::SUBGHZ_BAND_SCANNER:      SubGhzBandScanner::loop(); break;
 
             case AppState::NFC_READER:               NfcReader::loop(); break;
             default:

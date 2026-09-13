@@ -22,6 +22,54 @@ namespace {
     volatile bool tagActivated = false;
     bool sdReady = false;
 
+    // Human-readable ReturnCode names, so a failure prints something
+    // actionable ("ERR_IO (7)") instead of just "init failed" - matters
+    // a lot for a chip this fiddly to get talking over a shared SPI bus.
+    const char* returnCodeToString(ReturnCode code) {
+        switch (code) {
+            case ERR_NONE: return "ERR_NONE";
+            case ERR_NOMEM: return "ERR_NOMEM";
+            case ERR_BUSY: return "ERR_BUSY";
+            case ERR_IO: return "ERR_IO";
+            case ERR_TIMEOUT: return "ERR_TIMEOUT";
+            case ERR_REQUEST: return "ERR_REQUEST";
+            case ERR_NOMSG: return "ERR_NOMSG";
+            case ERR_PARAM: return "ERR_PARAM";
+            case ERR_SYSTEM: return "ERR_SYSTEM";
+            case ERR_FRAMING: return "ERR_FRAMING";
+            case ERR_OVERRUN: return "ERR_OVERRUN";
+            case ERR_PROTO: return "ERR_PROTO";
+            case ERR_INTERNAL: return "ERR_INTERNAL";
+            case ERR_AGAIN: return "ERR_AGAIN";
+            case ERR_MEM_CORRUPT: return "ERR_MEM_CORRUPT";
+            case ERR_NOT_IMPLEMENTED: return "ERR_NOT_IMPLEMENTED";
+            case ERR_PC_CORRUPT: return "ERR_PC_CORRUPT";
+            case ERR_SEND: return "ERR_SEND";
+            case ERR_IGNORE: return "ERR_IGNORE";
+            case ERR_SEMANTIC: return "ERR_SEMANTIC";
+            case ERR_SYNTAX: return "ERR_SYNTAX";
+            case ERR_CRC: return "ERR_CRC";
+            case ERR_NOTFOUND: return "ERR_NOTFOUND";
+            case ERR_NOTUNIQUE: return "ERR_NOTUNIQUE";
+            case ERR_NOTSUPP: return "ERR_NOTSUPP";
+            case ERR_WRITE: return "ERR_WRITE";
+            case ERR_FIFO: return "ERR_FIFO";
+            case ERR_PAR: return "ERR_PAR";
+            case ERR_DONE: return "ERR_DONE";
+            case ERR_RF_COLLISION: return "ERR_RF_COLLISION";
+            case ERR_HW_OVERRUN: return "ERR_HW_OVERRUN";
+            case ERR_RELEASE_REQ: return "ERR_RELEASE_REQ";
+            case ERR_SLEEP_REQ: return "ERR_SLEEP_REQ";
+            case ERR_WRONG_STATE: return "ERR_WRONG_STATE";
+            case ERR_MAX_RERUNS: return "ERR_MAX_RERUNS";
+            case ERR_DISABLED: return "ERR_DISABLED";
+            case ERR_HW_MISMATCH: return "ERR_HW_MISMATCH";
+            case ERR_LINK_LOSS: return "ERR_LINK_LOSS";
+            case ERR_INCOMPLETE_BYTE: return "ERR_INCOMPLETE_BYTE";
+            default: return "ERR_UNKNOWN";
+        }
+    }
+
     void onStateChange(rfalNfcState state) {
         if (state == RFAL_NFC_STATE_ACTIVATED) {
             tagActivated = true;
@@ -220,13 +268,18 @@ namespace {
 bool NfcReader::begin() {
     pinMode(NFC_CS_PIN, OUTPUT);
     digitalWrite(NFC_CS_PIN, HIGH);
+    pinMode(NFC_IRQ_PIN, INPUT); // belt-and-suspenders: the library should
+                                 // do this itself, but costs nothing here
     nfcSPI.begin(NFC_SPI_SCK_PIN, NFC_SPI_MISO_PIN, NFC_SPI_MOSI_PIN, NFC_CS_PIN);
+    delay(50); // let the chip's power/SPI lines settle before probing it
 
-    if (nfc.rfalNfcInitialize() != ERR_NONE) {
-        UIManager::printLine("ST25R3916 init failed.");
-        UIManager::printLine("Is the Cap CC1101 plugged");
-        UIManager::printLine("in? (shares CS/SPI with");
-        UIManager::printLine("the sub-GHz chip on it)");
+    ReturnCode initErr = nfc.rfalNfcInitialize();
+    if (initErr != ERR_NONE) {
+        UIManager::printLine("ST25R3916 init failed:");
+        UIManager::printLine(String(returnCodeToString(initErr)) + " (" + String(initErr) + ")");
+        UIManager::printLine("Check: Cap CC1101 seated");
+        UIManager::printLine("firmly? NFC_CS/IRQ correct");
+        UIManager::printLine("in config.h (G6/G4)?");
         return false;
     }
 

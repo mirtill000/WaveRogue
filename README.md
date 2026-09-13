@@ -1,7 +1,7 @@
 # WaveRogue
 
 RF security-auditing firmware for the **M5Stack Cardputer** (ESP32-S3),
-built with PlatformIO + Arduino. It provides 17 keyboard-navigable
+built with PlatformIO + Arduino. It provides 18 keyboard-navigable
 modules, organized into **LoRa Tools**, **Sub-GHz Tools**, and **NFC
 Tools** menus, for auditing LoRaWAN networks, simple sub-GHz (OOK/ASK/FSK)
 devices, and NFC-A/MIFARE Classic badges.
@@ -125,6 +125,7 @@ src/
   subghz_bug_detector.*          Analog bug / continuous-carrier detector
   subghz_pocsag_scanner.*        POCSAG pager scanner
   subghz_syncword_analyzer.*     Preamble/sync-word fingerprinting
+  subghz_band_scanner.*          Multi-frequency sweep + packet sniffer
 
   nfc_reader.*                   NFC-A reader/writer + MIFARE Classic default-key auditor
 ```
@@ -236,6 +237,19 @@ src/
    classify unknown hardware by vendor. Extend the table in
    `subghz_syncword_analyzer.cpp` with your own findings.
 
+9. **Band Scanner (Multi-Freq)** — sweeps a configurable frequency range
+   (default: the EU 433 MHz SRD sub-band, 433.05-434.79 MHz) with a short
+   dwell per channel, watching raw edge timing the same way the Raw
+   Sniffer does. As soon as a channel shows enough edges to look like a
+   real modulated transmission, it locks on and displays the captured
+   pulses live; once that channel goes quiet it resumes sweeping from the
+   next one. Complementary to (not overlapping with) the Analog Bug
+   Detector: this looks for *packets* (edge-rich bursts), that one looks
+   for *continuous carriers* (few/no edges) - a device transmitting
+   somewhere in the range without you knowing the exact channel shows up
+   here, not there. Change `SUBGHZ_BANDSCAN_*` in `config.h` to scan a
+   different range/dwell.
+
 ## NFC Tools
 
 1. **NFC Reader/Writer** — polls for NFC-A tags/badges and reports
@@ -286,6 +300,15 @@ src/
    UHF reader" (the ST25R3916 qualifies) and forbids relicensing that code
    under an open-source license. This only affects those two vendored
    folders - it doesn't change how you can license the rest of WaveRogue.
+
+   **Troubleshooting "ST25R3916 init failed":** the module now prints the
+   actual `ReturnCode` name/number (from `lib/NFC-RFAL/src/st_errno.h`),
+   not just a generic message. `ERR_IO`/`ERR_TIMEOUT` usually mean the
+   chip never answered at all - double check `NFC_CS_PIN`/`NFC_IRQ_PIN`
+   in `config.h` (G6/G4) against your actual wiring, that the Cap CC1101
+   is seated firmly in the Cap-Bus connector, and that nothing else is
+   driving those two pins at the same time. `ERR_PARAM`/`ERR_REQUEST`
+   point more at a driver/config mismatch than a wiring problem.
 
 ## Keyboard controls
 

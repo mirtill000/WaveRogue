@@ -137,6 +137,27 @@
 #define SUBGHZ_FREQ_MHZ       433.92f
 
 // =============================================================================
+// Sub-GHz: Multi-Frequency Band Scanner
+// =============================================================================
+// Sweeps a configurable frequency range, dwelling briefly on each
+// channel, and locks onto any channel where enough raw edges show up
+// during the dwell to look like an actual modulated transmission (as
+// opposed to noise, or a continuous unmodulated carrier - see the Analog
+// Bug Detector for that case). Default range covers the common license-
+// free EU 433 MHz SRD sub-band (ETSI 433.05-434.79 MHz); change it to
+// scan a different band your antenna/hardware actually covers.
+#define SUBGHZ_BANDSCAN_START_MHZ     433.05f
+#define SUBGHZ_BANDSCAN_END_MHZ       434.79f
+#define SUBGHZ_BANDSCAN_STEP_MHZ      0.10f
+#define SUBGHZ_BANDSCAN_DWELL_MS      200
+// Edges captured during one dwell window above this many means "this
+// looks like a real transmission, not just noise" - lock onto it.
+#define SUBGHZ_BANDSCAN_MIN_PULSES    6
+// How long a locked channel has to stay quiet before the scanner decides
+// the transmission ended and resumes sweeping (from the next channel).
+#define SUBGHZ_BANDSCAN_LOCK_QUIET_MS 800
+
+// =============================================================================
 // Sub-GHz: Weather/TPMS Telemetry Decoder
 // =============================================================================
 // This is a dictionary-based decoder in the spirit of rtl_433, but with a

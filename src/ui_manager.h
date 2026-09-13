@@ -38,6 +38,7 @@ enum class AppState {
     SUBGHZ_BUG_DETECT,       // Module: Analog Bug / Carrier Detector
     SUBGHZ_POCSAG_SCAN,      // Module: POCSAG/FLEX Pager Scanner
     SUBGHZ_SYNCWORD_ANALYZER, // Module: Preamble/Sync-Word Analyzer
+    SUBGHZ_BAND_SCANNER,      // Module: Multi-Frequency Band Scanner
 
     // ---- NFC leaf modules ----
     NFC_READER               // Module: NFC Reader/Writer + Mifare default-key auditor
