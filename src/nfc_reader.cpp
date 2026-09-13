@@ -11,6 +11,7 @@
 #include <rfal_nfc.h>
 #include <rfal_rfst25r3916.h>
 #include <st25r3916_config.h>
+#include <st25r3916_com.h>
 #include <st_errno.h>
 
 namespace {
@@ -277,6 +278,28 @@ bool NfcReader::begin() {
     if (initErr != ERR_NONE) {
         UIManager::printLine("ST25R3916 init failed:");
         UIManager::printLine(String(returnCodeToString(initErr)) + " (" + String(initErr) + ")");
+
+        if (initErr == ERR_HW_MISMATCH) {
+            // rfalNfcInitialize() bailed because reading register 0x3F
+            // (IC_IDENTITY) didn't match the known ST25R3916/3916B type
+            // bits. That's ambiguous by itself: it fires identically
+            // whether a different chip is really there, OR the CS/IRQ
+            // wiring for THIS chip is bad and the register read just
+            // came back as noise (0x00/0xFF are the classic "nothing
+            // answered" values). Read it again directly and print the
+            // raw byte so which case this is stops being a guess.
+            uint8_t rawId = 0;
+            nfcHwReader.st25r3916ReadRegister(ST25R3916_REG_IC_IDENTITY, &rawId);
+            UIManager::printLine("Raw reg 0x3F = 0x" + String(rawId, HEX));
+            if (rawId == 0x00 || rawId == 0xFF) {
+                UIManager::printLine("-> looks like nothing");
+                UIManager::printLine("   answered (wiring/CS/IRQ)");
+            } else {
+                UIManager::printLine("-> chip responded, but");
+                UIManager::printLine("   with an unexpected ID");
+            }
+        }
+
         UIManager::printLine("Check: Cap CC1101 seated");
         UIManager::printLine("firmly? NFC_CS/IRQ correct");
         UIManager::printLine("in config.h (G6/G4)?");
