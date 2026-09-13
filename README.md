@@ -234,6 +234,20 @@ exposes a 433 MHz path and an 868/915 MHz path in software (see
 this hardware, so that preset tunes through the 433 MHz path instead, with
 reduced range/sensitivity as a result.
 
+**On sweep width vs. catching short transmissions:** the 433 MHz preset
+is scoped to the actual EU SRD860 sub-band (433.05–434.79 MHz, ~18
+channels) rather than a wide spectrum-analyzer-style range, specifically
+so a full sweep completes in a few seconds. A short manual transmission
+(a Flipper Zero "Send", a garage remote press - often under a second)
+has to land inside the CC1101's dwell window on the right channel to be
+caught at all; at the default `SUBGHZ_AUDIT_DWELL_MS`/`SUBGHZ_AUDIT_STEP_MHZ`,
+a 20 MHz-wide sweep (like the 315/868/915 presets still use) takes on the
+order of 40 seconds per pass, so a one-off short burst is likely to be
+missed even though reception itself works fine. Hold/repeat the
+transmission for the width of a full sweep pass if a single send isn't
+being picked up, or narrow a preset's range in `subghz_audit.cpp`'s
+`kBands[]` the same way 433 MHz was scoped down.
+
 The overall sweep/lock/decode/repeat-detect approach - including
 decoding every repeat of a captured frame independently and
 cross-checking them against each other for higher-confidence results -

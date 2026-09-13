@@ -11,9 +11,17 @@ namespace {
     SPIClass subghzSPI(HSPI);
     CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
-    // Band edges match the generic ISM presets used by other Cardputer-class
-    // Sub-GHz tools (e.g. Evil-M5Project's spectrum-analyzer band list) -
-    // these are standard ISM allocation boundaries, not anyone's expression.
+    // Band edges. These are standard ISM/SRD allocation boundaries, not
+    // anyone's expression. 433 MHz is scoped to the actual EU SRD860
+    // sub-band (433.05-434.79 MHz, ~18 channels at SUBGHZ_AUDIT_STEP_MHZ)
+    // rather than a broad spectrum-analyzer-style sweep range: a full
+    // sweep at SUBGHZ_AUDIT_DWELL_MS per channel needs to complete fast
+    // enough that a real device's short transmission (a Flipper Zero
+    // manual send, a garage remote press, ~1s or less) has a realistic
+    // chance of landing inside a dwell window - a 20 MHz-wide sweep like
+    // the other three bands still use takes ~40s per pass, so the CC1101
+    // is tuned elsewhere for the overwhelming majority of the time a
+    // short burst could occur.
     struct BandDef {
         const char* label;
         float startMhz;
@@ -21,7 +29,7 @@ namespace {
     };
     constexpr BandDef kBands[] = {
         {"315 MHz", 310.0f, 320.0f},
-        {"433 MHz", 425.0f, 445.0f},
+        {"433 MHz", 433.05f, 434.79f},
         {"868 MHz", 860.0f, 875.0f},
         {"915 MHz", 905.0f, 925.0f},
     };
