@@ -23,12 +23,9 @@ using m5::nfc::a::mifare::classic::get_sector_trailer_block_from_sector;
 
 namespace {
     m5::unit::UnitUnified Units;
-    // CapCC1101NFC defaults its CS pin to G6 internally (M5's own
-    // hardcoded assumption), but this Cap CC1101 module's own printed
-    // silkscreen label reads NFC_CS=G5 - confirmed indirectly by the
-    // CC1101 itself actually being on G6, opposite to every earlier
-    // assumption (see config.h). Override it explicitly rather than
-    // relying on the library default.
+    // CapCC1101NFC's default CS (G6) already matches NFC_CS_PIN - passed
+    // explicitly anyway (see config.h) so this is the one place to
+    // change it if a future unit's wiring differs.
     m5::unit::CapCC1101NFC unit{NFC_CS_PIN};
     m5::nfc::NFCLayerA nfc_a{unit};
 
@@ -207,6 +204,15 @@ bool NfcReader::begin() {
     // net.
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
+
+    // M5UnitUnified's SPI adapter (adapter_spi.cpp) only ever manages its
+    // OWN CS pin around a transaction - it never touches the CC1101's CS
+    // (SUBGHZ_CS_PIN), even though both chips share this SPI bus. If that
+    // line is left floating or asserted low from a previous state, the
+    // CC1101 can contend on the shared MISO line during every NFC
+    // transaction. Explicitly deselect it before touching the NFC chip.
+    pinMode(SUBGHZ_CS_PIN, OUTPUT);
+    digitalWrite(SUBGHZ_CS_PIN, HIGH);
 
     // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
     // CapCC1101NFC setup. addSPI() resolves the shared Cap-Bus SPI pins

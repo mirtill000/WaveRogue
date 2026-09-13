@@ -64,13 +64,10 @@ update the pins in `config.h` accordingly and set
 
 The Sub-GHz pin defaults similarly match M5Stack's official **Cap
 CC1101** Cardputer Cap-Bus add-on. It plugs into the exact same physical
-Cap-Bus slot (and shared SPI bus) as the Cap LoRa-1262 module above - on
+Cap-Bus slot (and CS/SPI pins) as the Cap LoRa-1262 module above - on
 real hardware the two are mutually exclusive, you swap whichever cap you
-need for the LoRa Tools vs. Sub-GHz Tools menu. Its own CS (`SUBGHZ_CS_PIN`,
-G6) is a *different* pin from the LoRa module's NSS (`LORA_CS_PIN`, G5)
-despite sharing a connector - go by the Cap CC1101's own printed
-silkscreen label, not by assuming the two caps' CS lines line up. Two
-equivalent gotchas apply here too:
+need for the LoRa Tools vs. Sub-GHz Tools menu. Two equivalent gotchas
+apply here too:
 
 1. Same dedicated SPI bus as the LoRa module (`SUBGHZ_SPI_*`, aliased to
    the same `LORA_SPI_*` pins in `config.h` since it's physically the
@@ -88,16 +85,16 @@ If you're using a different Sub-GHz module/wiring, update the
 switch.
 
 That same Cap CC1101 board also carries the ST25R3916 NFC front-end used
-by **NFC Tools**, on its own CS (`NFC_CS_PIN`, G5) and IRQ (G4) but the
-same shared Cap-Bus SPI bus. M5Stack's own `m5::unit::CapCC1101NFC` unit
-class hardcodes a *different* CS (G6) internally - wrong for this specific
-module, per its own printed label - so `nfc_reader.cpp` overrides it
-explicitly via the constructor (`CapCC1101NFC unit{NFC_CS_PIN}`) instead
-of trusting the library default; see the NFC Tools section below for the
-full story. G5/G4 happen to numerically match `LORA_CS_PIN`/`LORA_DIO1_PIN`
-- not a conflict, for the same reason as above: only one cap is ever
-physically plugged in at a time, so it "owns" those pins regardless of
-which module's macro name you look at.
+by **NFC Tools**, on its own CS (`NFC_CS_PIN`, G6) and IRQ (G4) but the
+same shared Cap-Bus SPI bus - M5Stack's own `m5::unit::CapCC1101NFC` unit
+class already defaults to this same CS internally; `nfc_reader.cpp` still
+passes it explicitly (`CapCC1101NFC unit{NFC_CS_PIN}`) so `config.h`
+stays the one place to change it. G6/G4 happen to numerically match
+`LORA_BUSY_PIN`/`LORA_DIO1_PIN` - not a conflict, for the same reason as
+above: only one cap is ever physically plugged in at a time, so it "owns"
+those pins regardless of which module's macro name you look at. See the
+NFC Tools section below for the pin-mixup investigation this project
+went through before settling on these values.
 
 All pin assignments and RF parameters live in **`src/config.h`** — edit
 that one file to match your actual wiring (Grove port, internal header, or
@@ -277,7 +274,7 @@ src/
 
    Setup: this module needs the ST25R3916 NFC front-end that ships on the
    **same Cap CC1101 module** as the CC1101 (same Cap-Bus slot/SPI bus,
-   separate CS/IRQ - G5/G4). It's built on M5Stack's own official
+   separate CS/IRQ - G6/G4). It's built on M5Stack's own official
    **M5UnitUnified + M5Unit-NFC** stack
    ([m5stack/M5Unit-NFC](https://github.com/m5stack/M5Unit-NFC),
    `m5::unit::CapCC1101NFC` + `m5::nfc::NFCLayerA`) rather than a
@@ -298,50 +295,62 @@ src/
    trivially default-keyed.
 
    **Why M5UnitUnified instead of a standalone ST25R3916 library, and
-   the actual root cause:** the first version of this module was built
+   the debugging history:** the first version of this module was built
    on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
    ([wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916)),
-   vendored directly into `lib/`. It never got the chip to answer
-   through RFAL's own init, despite methodically matching M5's own
-   official CapCC1101 driver step for step (`POWER_EN` HIGH, deselecting
-   what was believed to be the CC1101's CS, the same defensive `CMD_STOP`
-   before `CMD_SET_DEFAULT`, the same chip-ID retry loop, the same SPI
-   settings) - `ERR_HW_MISMATCH` reading `IC_IDENTITY` back as `0x00`,
-   every time. The module was then migrated to M5's own official
-   M5UnitUnified + M5Unit-NFC stack, which *also* failed to detect the
-   chip at first, regardless of SPI clock speed (10 MHz vs. 1 MHz - ruling
-   out signal integrity).
+   vendored directly into `lib/`. It never got the chip to answer through
+   RFAL's own init - `ERR_HW_MISMATCH` reading `IC_IDENTITY` back as
+   `0x00`, every time, despite matching M5's own official CapCC1101
+   driver step for step (`POWER_EN` HIGH, a defensive `CMD_STOP` before
+   `CMD_SET_DEFAULT`, a chip-ID retry loop, matching SPI settings). The
+   module was migrated to M5's own official M5UnitUnified + M5Unit-NFC
+   stack, which *also* failed to detect the chip, regardless of SPI clock
+   speed (10 MHz vs. 1 MHz - ruling out signal integrity).
 
-   Across that whole investigation, three different libraries/attempts
-   read three different-but-internally-consistent garbage values from
-   the same `IC_IDENTITY` register, with byte-identical SPI command
-   framing verified in every case. The actual cause turned out to be
-   much simpler than any of that: **the Cap CC1101 module's CS pin
-   assignments were backwards from the very start of this project.**
-   Every prior assumption here (this project's own original wiring,
-   *and* M5's own `M5UnitUnified`/`M5Unit-NFC` source code, which
-   hardcodes `PIN_CS_ST25R3916=6`/`PIN_CS_CC1101=5`) had the CC1101 on
-   G5 and the ST25R3916 on G6. The Cap CC1101 module's own printed
-   silkscreen label says the opposite - `CC_CS=G6`, `NFC_CS=G5` - and
-   turned out to be right: switching `SUBGHZ_CS_PIN` to 6 got the CC1101
-   radio actually initializing (previously unconfirmed - the earlier "no
-   Cap recognition error" was never an actual verified `radio.begin()`
-   success), and every one of those "NFC" register reads across every
-   driver attempt had actually been landing on the *CC1101's* status
-   byte the whole time (a real, chip-dependent value in its own right,
-   just not an NFC chip's) - which explains the different-but-repeatable
-   garbage far better than a hardware fault ever did. `CapCC1101NFC`'s
-   constructor accepts a CS pin override (`m5::unit::CapCC1101NFC
-   unit{NFC_CS_PIN}` in `nfc_reader.cpp`), so no library patching was
-   needed once this was found - just passing the correct pin instead of
-   trusting the library's (wrong, for this board) hardcoded default.
+   A CS pin mixup was investigated and ruled back out along the way: the
+   Cap CC1101 module's own printed silkscreen label reads `CC_CS=G6`,
+   `NFC_CS=G5` - the opposite of what this project originally assumed.
+   Swapping to match the label made `radio.begin()` for the CC1101
+   report success for the first time - but that likely wasn't real:
+   Sub-GHz Tools' Raw Sniffer/Band Scanner still couldn't receive an
+   actual 433.92MHz transmission at that CS value, and a **second**
+   independent source - the third-party
+   [Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project)
+   Cardputer firmware (a from-scratch driver with no dependency on
+   either RFAL or M5UnitUnified, confirmed by its author/users to read
+   NFC correctly on this same hardware) - uses `CC_CS=5`/`NFC_CS=6`,
+   agreeing with M5's own hardcoded source
+   (`PIN_CS_ST25R3916=6`/`PIN_CS_CC1101=5`) and this project's original
+   wiring. Two independent, hardware-tested sources beat one photographed
+   label with an easy-to-misread column layout - `SUBGHZ_CS_PIN`/
+   `NFC_CS_PIN` are back to 5/6.
 
-   If you hit similar symptoms on a differently-revisioned Cap CC1101 -
-   inconsistent raw register reads on the NFC side, or a CC1101 that
-   silently was never actually confirmed working - check the physical
-   pin labels printed on your own module before assuming a hardware
-   fault or chasing SPI timing; they may not match what any given
-   driver's source code assumes.
+   With the pins settled, `Units.begin()` still fails
+   (`Not detected ST25R3916 03,06` in the serial log) - reading the
+   *same* `IC_IDENTITY` register that a raw, library-independent SPI
+   probe reads as a plausible ID. Comparing M5UnitUnified's low-level SPI
+   adapter (`adapter_spi.cpp`) against Evil-M5Project's own minimal
+   driver turned up a real gap: M5's adapter only ever manages its own
+   CS pin around a transaction and never deselects the CC1101, which
+   shares this SPI bus - Evil-M5Project's driver explicitly drives the
+   CC1101's CS HIGH before every single NFC SPI transaction. WaveRogue
+   now does the same (once, in `NfcReader::begin()`, before `addSPI()`)
+   as the next thing to test.
+
+   (Evil-M5Project's source itself carries no explicit license in its
+   repository, so its code was not copied here - only the general
+   shared-bus deselection technique, independently reimplemented, and
+   its pin assignments, used as a second data point against M5's own
+   hardcoded values.)
+
+   If you hit similar symptoms on a Cap CC1101 unit - inconsistent raw
+   register reads on the NFC side that don't match what a raw SPI probe
+   reads - cross-check against more than one source (the chip's own
+   datasheet, the module's official driver source, and if available a
+   second independent firmware) before trusting a single photographed
+   label; on shared-bus hardware like this, also check whether every
+   library involved actually deselects every *other* chip on the bus,
+   not just its own.
 
 ## Keyboard controls
 
