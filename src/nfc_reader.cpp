@@ -6,6 +6,11 @@
 #include <SD.h>
 #include <string.h>
 
+// M5Unified.h must come first: wiring/m5_unit_unified_wiring.hpp uses the
+// global M5 object (M5.getBoard()/M5.getPin()) and m5::board_t but never
+// includes M5Unified.h itself - it expects the includer to have already
+// brought it in (matching M5's own official CapCC1101NFC example).
+#include <M5Unified.h>
 #include <M5UnitUnified.h>
 #include <M5UnitUnifiedNFC.h>
 #include <M5Utility.h>
