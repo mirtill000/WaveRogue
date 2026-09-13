@@ -3,97 +3,25 @@
 #include "ui_manager.h"
 #include "rf_utils.h"
 #include <Arduino.h>
-#include <SPI.h>
 #include <SD.h>
 #include <string.h>
 
-#include <rfal_mf1.h>
-#include <rfal_nfc.h>
-#include <rfal_rfst25r3916.h>
-#include <st25r3916_config.h>
-#include <st25r3916_com.h>
-#include <st_errno.h>
+#include <M5UnitUnified.h>
+#include <M5UnitUnifiedNFC.h>
+#include <M5Utility.h>
+#include <wiring/m5_unit_unified_wiring.hpp>
+
+using m5::nfc::a::PICC;
+using m5::nfc::a::mifare::classic::Key;
+using m5::nfc::a::mifare::classic::get_sector;
+using m5::nfc::a::mifare::classic::get_sector_trailer_block_from_sector;
 
 namespace {
-    SPIClass nfcSPI(HSPI);
-    // 10 MHz to match M5's own confirmed-working CapCC1101 NFC reference
-    // (their addSPI(..., 10000000, 1) call) instead of RFAL's 5 MHz default.
-    RfalRfST25R3916Class nfcHwReader(&nfcSPI, NFC_CS_PIN, NFC_IRQ_PIN, 10000000UL);
-    RfalNfcClass nfc(&nfcHwReader);
-    RfalMf1Class mf1(&nfcHwReader);
+    m5::unit::UnitUnified Units;
+    m5::unit::CapCC1101NFC unit{};   // Cap CC1101's ST25R3916 front-end, over SPI
+    m5::nfc::NFCLayerA nfc_a{unit};
 
-    volatile bool tagActivated = false;
     bool sdReady = false;
-
-    // Human-readable ReturnCode names, so a failure prints something
-    // actionable ("ERR_IO (7)") instead of just "init failed" - matters
-    // a lot for a chip this fiddly to get talking over a shared SPI bus.
-    const char* returnCodeToString(ReturnCode code) {
-        switch (code) {
-            case ERR_NONE: return "ERR_NONE";
-            case ERR_NOMEM: return "ERR_NOMEM";
-            case ERR_BUSY: return "ERR_BUSY";
-            case ERR_IO: return "ERR_IO";
-            case ERR_TIMEOUT: return "ERR_TIMEOUT";
-            case ERR_REQUEST: return "ERR_REQUEST";
-            case ERR_NOMSG: return "ERR_NOMSG";
-            case ERR_PARAM: return "ERR_PARAM";
-            case ERR_SYSTEM: return "ERR_SYSTEM";
-            case ERR_FRAMING: return "ERR_FRAMING";
-            case ERR_OVERRUN: return "ERR_OVERRUN";
-            case ERR_PROTO: return "ERR_PROTO";
-            case ERR_INTERNAL: return "ERR_INTERNAL";
-            case ERR_AGAIN: return "ERR_AGAIN";
-            case ERR_MEM_CORRUPT: return "ERR_MEM_CORRUPT";
-            case ERR_NOT_IMPLEMENTED: return "ERR_NOT_IMPLEMENTED";
-            case ERR_PC_CORRUPT: return "ERR_PC_CORRUPT";
-            case ERR_SEND: return "ERR_SEND";
-            case ERR_IGNORE: return "ERR_IGNORE";
-            case ERR_SEMANTIC: return "ERR_SEMANTIC";
-            case ERR_SYNTAX: return "ERR_SYNTAX";
-            case ERR_CRC: return "ERR_CRC";
-            case ERR_NOTFOUND: return "ERR_NOTFOUND";
-            case ERR_NOTUNIQUE: return "ERR_NOTUNIQUE";
-            case ERR_NOTSUPP: return "ERR_NOTSUPP";
-            case ERR_WRITE: return "ERR_WRITE";
-            case ERR_FIFO: return "ERR_FIFO";
-            case ERR_PAR: return "ERR_PAR";
-            case ERR_DONE: return "ERR_DONE";
-            case ERR_RF_COLLISION: return "ERR_RF_COLLISION";
-            case ERR_HW_OVERRUN: return "ERR_HW_OVERRUN";
-            case ERR_RELEASE_REQ: return "ERR_RELEASE_REQ";
-            case ERR_SLEEP_REQ: return "ERR_SLEEP_REQ";
-            case ERR_WRONG_STATE: return "ERR_WRONG_STATE";
-            case ERR_MAX_RERUNS: return "ERR_MAX_RERUNS";
-            case ERR_DISABLED: return "ERR_DISABLED";
-            case ERR_HW_MISMATCH: return "ERR_HW_MISMATCH";
-            case ERR_LINK_LOSS: return "ERR_LINK_LOSS";
-            case ERR_INCOMPLETE_BYTE: return "ERR_INCOMPLETE_BYTE";
-            default: return "ERR_UNKNOWN";
-        }
-    }
-
-    void onStateChange(rfalNfcState state) {
-        if (state == RFAL_NFC_STATE_ACTIVATED) {
-            tagActivated = true;
-        }
-    }
-
-    bool startDiscovery() {
-        // A local, stack-scoped struct is safe here: rfalNfcDiscover()
-        // copies its contents rather than retaining the pointer (the
-        // upstream example itself passes a local variable from setup(),
-        // which returns immediately after).
-        rfalNfcDiscoverParam params = {};
-        params.compMode = RFAL_COMPLIANCE_MODE_NFC;
-        params.devLimit = 1U;
-        params.nfcfBR = RFAL_BR_212;
-        params.ap2pBR = RFAL_BR_424;
-        params.notifyCb = onStateChange;
-        params.totalDuration = NFC_DISCOVER_DURATION_MS;
-        params.techs2Find = (uint16_t)RFAL_NFC_POLL_TECH_A;
-        return nfc.rfalNfcDiscover(&params) == ERR_NONE;
-    }
 
     // -------------------------------------------------------------------
     // A small, widely-published dictionary of MIFARE Classic default/
@@ -103,7 +31,7 @@ namespace {
     // trivially default-keyed.
     // -------------------------------------------------------------------
     struct DictKey {
-        uint8_t key[RFAL_MF1_KEY_LEN];
+        uint8_t key[6];
         const char* label;
     };
     const DictKey kDefaultKeys[] = {
@@ -122,28 +50,16 @@ namespace {
         {{0x8F, 0xD0, 0xA4, 0xF2, 0x56, 0xE9}, "common default"},
     };
     constexpr size_t kNumDefaultKeys = sizeof(kDefaultKeys) / sizeof(kDefaultKeys[0]);
-    const uint8_t kKeyTypes[2] = {RFAL_MF1_AUTH_KEY_A, RFAL_MF1_AUTH_KEY_B};
-    const char* keyTypeName(uint8_t t) { return (t == RFAL_MF1_AUTH_KEY_A) ? "A" : "B"; }
 
-    // -------------------------------------------------------------------
-    // MIFARE Classic sector/block layout. Sectors 0-31 are always 4
-    // blocks; on a 4K card, sectors 32-39 are 16 blocks each, starting
-    // at block 128.
-    // -------------------------------------------------------------------
-    int sectorCountForSak(uint8_t sak) {
-        switch (sak) {
-            case 0x09: return 5;   // MIFARE Mini (320B)
-            case 0x08: case 0x28: return 16;  // MIFARE Classic 1K (0x28: some JCOP/clones)
-            case 0x18: case 0x38: return 40;  // MIFARE Classic 4K (0x38: some JCOP/clones)
-            default: return 0;     // not a recognized Classic SAK
-        }
+    Key toKey(const uint8_t* b) {
+        Key k;
+        memcpy(k.data(), b, 6);
+        return k;
     }
-    uint8_t sectorFirstBlock(int sector) {
-        return (sector < 32) ? (uint8_t)(sector * 4) : (uint8_t)(128 + (sector - 32) * 16);
-    }
-    int sectorBlockCountForSector(int sector) { return (sector < 32) ? 4 : 16; }
-    uint8_t sectorTrailerBlock(int sector) {
-        return sectorFirstBlock(sector) + (uint8_t)(sectorBlockCountForSector(sector) - 1);
+
+    bool authenticate(uint8_t block, const Key& key, bool useKeyB) {
+        return useKeyB ? nfc_a.mifareClassicAuthenticateB(block, key)
+                        : nfc_a.mifareClassicAuthenticateA(block, key);
     }
 
     void logSdLine(File& f, const String& line) {
@@ -156,8 +72,8 @@ namespace {
     // Sweeps every sector of a detected MIFARE Classic card against the
     // default-key dictionary, dumping cracked sectors to `f` and running
     // one write-access self-test along the way.
-    void sweepMifareClassic(rfalNfcDevice* device, uint8_t sak, File& f) {
-        int nSectors = sectorCountForSak(sak);
+    void sweepMifareClassic(const PICC& picc, File& f) {
+        int nSectors = (int)get_sector(picc.blocks - 1) + 1;
         UIManager::printLine("MIFARE Classic (" + String(nSectors) + " sectors)");
         logSdLine(f, "type,mifare_classic,sectors," + String(nSectors));
 
@@ -176,43 +92,46 @@ namespace {
         for (int s = 0; s < nSectors; s++) {
             UIManager::setStatus("Sector " + String(s + 1) + "/" + String(nSectors) + " - trying default keys...");
 
-            uint8_t trailer = sectorTrailerBlock(s);
+            uint8_t trailer = (uint8_t)get_sector_trailer_block_from_sector((uint16_t)s);
             bool sectorCracked = false;
 
             for (int kt = 0; kt < 2 && !sectorCracked; kt++) {
+                bool useKeyB = (kt == 1);
                 for (size_t k = 0; k < kNumDefaultKeys && !sectorCracked; k++) {
-                    rfalMf1CryptoState crypto = {};
-                    uint32_t nonce = 0;
-                    ReturnCode err = mf1.authenticate(&crypto, device, trailer, kDefaultKeys[k].key, kKeyTypes[kt], &nonce);
-                    if (err != ERR_NONE) continue;
+                    Key key = toKey(kDefaultKeys[k].key);
+                    if (!authenticate(trailer, key, useKeyB)) continue;
 
                     sectorCracked = true;
                     cracked++;
-                    String keyHex = RfUtils::bytesToHex(kDefaultKeys[k].key, RFAL_MF1_KEY_LEN);
-                    UIManager::printLine("Sector " + String(s) + ": key " + String(keyTypeName(kKeyTypes[kt])) +
-                                          "=" + keyHex);
-                    logSdLine(f, "sector," + String(s) + ",cracked," + String(keyTypeName(kKeyTypes[kt])) + "," +
-                                     keyHex + "," + String(kDefaultKeys[k].label));
+                    String keyHex = RfUtils::bytesToHex(kDefaultKeys[k].key, 6);
+                    const char* ktName = useKeyB ? "B" : "A";
+                    UIManager::printLine("Sector " + String(s) + ": key " + String(ktName) + "=" + keyHex);
+                    logSdLine(f, "sector," + String(s) + ",cracked," + String(ktName) + "," + keyHex + "," +
+                                     kDefaultKeys[k].label);
 
-                    int firstBlk = sectorFirstBlock(s);
-                    int nBlk = sectorBlockCountForSector(s);
+                    int firstBlk = (s < 32) ? s * 4 : 128 + (s - 32) * 16;
+                    int nBlk = (s < 32) ? 4 : 16;
                     for (int b = 0; b < nBlk; b++) {
                         uint8_t blockNo = (uint8_t)(firstBlk + b);
-                        uint8_t data[RFAL_MF1_BLOCK_LEN];
-                        if (mf1.readBlock(&crypto, blockNo, data) != ERR_NONE) continue;
+                        uint8_t data[16];
+                        if (!nfc_a.read16(data, blockNo)) continue;
 
-                        logSdLine(f, "block," + String(blockNo) + "," + RfUtils::bytesToHex(data, RFAL_MF1_BLOCK_LEN));
+                        logSdLine(f, "block," + String(blockNo) + "," + RfUtils::bytesToHex(data, 16));
 
                         // One-time write-access self-test: write the
                         // block's own bytes back unchanged, then read
                         // them again to confirm - proves the write path
-                        // works without ever changing tag content.
-                        if (!wroteWriteTest && blockNo != trailer) {
+                        // works without ever changing tag content. Skip
+                        // the trailer (holds the keys/access bits) and
+                        // block 0 of sector 0 (hardware-locked
+                        // manufacturer block on genuine cards).
+                        bool isManufacturerBlock = (s == 0 && b == 0);
+                        if (!wroteWriteTest && blockNo != trailer && !isManufacturerBlock) {
                             wroteWriteTest = true;
-                            uint8_t verify[RFAL_MF1_BLOCK_LEN];
-                            bool ok = (mf1.writeBlock(&crypto, blockNo, data) == ERR_NONE) &&
-                                      (mf1.readBlock(&crypto, blockNo, verify) == ERR_NONE) &&
-                                      (memcmp(data, verify, RFAL_MF1_BLOCK_LEN) == 0);
+                            uint8_t verify[16];
+                            bool ok = nfc_a.write16(blockNo, data, 16) &&
+                                      nfc_a.read16(verify, blockNo) &&
+                                      memcmp(data, verify, 16) == 0;
                             UIManager::printLine(ok ? "Write-access test: OK" : "Write-access test: FAILED");
                             logSdLine(f, String("write_test,") + (ok ? "ok" : "failed"));
                         }
@@ -229,17 +148,14 @@ namespace {
         logSdLine(f, "summary,cracked," + String(cracked) + ",total," + String(nSectors));
     }
 
-    void handleTag(rfalNfcDevice* device) {
+    void handleTag(PICC& picc) {
         UIManager::clearLog();
-        String uidHex = RfUtils::bytesToHex(device->nfcid, device->nfcidLen);
-        uint8_t atqa0 = device->dev.nfca.sensRes.anticollisionInfo;
-        uint8_t atqa1 = device->dev.nfca.sensRes.platformInfo;
-        uint8_t sak = device->dev.nfca.selRes.sak;
-
+        String uidHex = RfUtils::bytesToHex(picc.uid, picc.size);
         UIManager::printLine("UID: " + uidHex);
-        char meta[24];
-        snprintf(meta, sizeof(meta), "ATQA:%02X%02X SAK:%02X", atqa0, atqa1, sak);
+        char meta[40];
+        snprintf(meta, sizeof(meta), "ATQA:%04X SAK:%02X", picc.atqa, picc.sak);
         UIManager::printLine(String(meta));
+        UIManager::printLine("Type: " + String(picc.typeAsString().c_str()));
 
         File f;
         if (sdReady) {
@@ -248,7 +164,7 @@ namespace {
             f = SD.open(path.c_str(), FILE_WRITE);
             if (f) {
                 logSdLine(f, "uid," + uidHex);
-                logSdLine(f, String("atqa,") + meta);
+                logSdLine(f, String("meta,") + meta);
                 UIManager::printLine("Saving to " + path);
             } else {
                 UIManager::printLine("[!] Could not open " + path);
@@ -257,11 +173,11 @@ namespace {
             UIManager::printLine("[!] No SD - results not saved");
         }
 
-        if (RfalMf1Class::isNfcaDevice(device) && sectorCountForSak(sak) > 0) {
-            sweepMifareClassic(device, sak, f);
+        if (picc.isMifareClassic() && picc.blocks > 0) {
+            sweepMifareClassic(picc, f);
         } else {
             UIManager::printLine("Not a recognized MIFARE");
-            UIManager::printLine("Classic SAK - UID logged only.");
+            UIManager::printLine("Classic type - UID logged only.");
         }
 
         if (f) f.close();
@@ -269,94 +185,29 @@ namespace {
 }
 
 bool NfcReader::begin() {
-    // M5Stack's own (still-unreleased) CapCC1101 driver declares a
-    // POWER_EN line on this pin for the ST25R3916 front-end, though their
-    // driver never actually drives it in practice - worth trying anyway
-    // since it costs nothing and every prior probe reads the chip as
-    // completely silent (raw register 0x00 on both RFAL and a manual,
-    // library-independent SPI probe).
+    // M5Stack's own CapCC1101 driver documents a POWER_EN line on this
+    // pin for the ST25R3916 front-end but never actually drives it
+    // itself (confirmed by reading their unit_ST25R3916.cpp source) -
+    // presumably because the board's own bring-up (M5Cardputer.begin(),
+    // already called once at boot in UIManager::begin()) already leaves
+    // it in a working state. Driving it HIGH here too is harmless and
+    // was empirically necessary for an earlier, standalone ST25R3916
+    // driver attempt on this same hardware, so keep it as a cheap safety
+    // net.
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
 
-    // The Cap CC1101 board carries BOTH the CC1101 (CS=SUBGHZ_CS_PIN/G5)
-    // and the ST25R3916 (CS=NFC_CS_PIN/G6) on the same physical board,
-    // sharing the same SPI bus (SCK/MOSI/MISO) - unlike the Cap LoRa-1262,
-    // which is a mutually-exclusive, entirely separate cap. Nothing in the
-    // RFAL/ST25R3916 driver ever touches the CC1101's CS line, so if it's
-    // left floating or low, the CC1101 can contend on the shared MISO
-    // line during every NFC transaction. Explicitly deselect it here.
-    pinMode(SUBGHZ_CS_PIN, OUTPUT);
-    digitalWrite(SUBGHZ_CS_PIN, HIGH);
-
-    pinMode(NFC_CS_PIN, OUTPUT);
-    digitalWrite(NFC_CS_PIN, HIGH);
-    pinMode(NFC_IRQ_PIN, INPUT); // belt-and-suspenders: the library should
-                                 // do this itself, but costs nothing here
-    nfcSPI.begin(NFC_SPI_SCK_PIN, NFC_SPI_MISO_PIN, NFC_SPI_MOSI_PIN, NFC_CS_PIN);
-    delay(50); // let the chip's power/SPI lines settle before probing it
-
-    // Manual, RFAL-independent SPI probe of the same IC_IDENTITY register
-    // (0x3F): bit7=0,bit6=1 selects a register READ, bits5-0 are the
-    // address, per the ST25R3916 SPI framing. This bypasses RFAL's whole
-    // init sequence (SET_DEFAULT command, interrupt setup, etc.) - if
-    // this ALSO reads back 0x00, the problem is upstream of the library
-    // entirely (wiring/CS/IRQ), not something specific to how RFAL talks
-    // to a chip that shares its SPI bus with the CC1101.
-    nfcSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
-    digitalWrite(NFC_CS_PIN, LOW);
-    delayMicroseconds(5);
-    nfcSPI.transfer(0x40 | (ST25R3916_REG_IC_IDENTITY & 0x3F));
-    uint8_t manualProbeId = nfcSPI.transfer(0x00);
-    digitalWrite(NFC_CS_PIN, HIGH);
-    nfcSPI.endTransaction();
-    UIManager::printLine("Manual SPI probe: 0x" + String(manualProbeId, HEX));
-
-    // Defensive reset, ported from M5's own CapCC1101 bring-up sequence:
-    // stop any leftover RF field/TX/RX activity from a prior session
-    // (the chip has no hardware reset pin here - POWER_EN is the closest
-    // thing, and a firmware re-flash over USB doesn't power-cycle it) so
-    // it can't interfere with what rfalNfcInitialize() does next. M5's
-    // comment on this step is telling: without it, their oscillator
-    // enable step can fail on a warm boot due to this exact residual
-    // state - plausibly the same reason our chip-ID check has been
-    // reading back 0x00 immediately after RFAL's own CMD_SET_DEFAULT.
-    nfcHwReader.st25r3916ExecuteCommand(ST25R3916_CMD_STOP);
-    delay(2);
-
-    // rfalNfcInitialize() issues CMD_SET_DEFAULT (a soft reset) and then
-    // checks the chip ID almost immediately afterwards, with no settling
-    // delay in between. The manual probe above (which never resets the
-    // chip) reads back a valid ID - so a single post-reset check can
-    // apparently land inside the chip's reset window and read 0x00.
-    // M5's own official CapCC1101 driver defends against exactly this
-    // with a 5-attempt/20ms-apart chip-ID retry loop; do the same here
-    // by simply retrying the whole init call a few times.
-    ReturnCode initErr = ERR_NONE;
-    const int kInitAttempts = 5;
-    for (int attempt = 1; attempt <= kInitAttempts; ++attempt) {
-        initErr = nfc.rfalNfcInitialize();
-        if (initErr == ERR_NONE) {
-            if (attempt > 1) {
-                UIManager::printLine("ST25R3916 init ok (try " + String(attempt) + ")");
-            }
-            break;
-        }
-        delay(20);
-    }
-    if (initErr != ERR_NONE) {
-        UIManager::printLine("ST25R3916 init failed:");
-        UIManager::printLine(String(returnCodeToString(initErr)) + " (" + String(initErr) + ")");
-
-        if (initErr == ERR_HW_MISMATCH) {
-            uint8_t rawId = 0;
-            nfcHwReader.st25r3916ReadRegister(ST25R3916_REG_IC_IDENTITY, &rawId);
-            UIManager::printLine("RFAL reg0x3F: 0x" + String(rawId, HEX) +
-                                  ((rawId == 0x00 || rawId == 0xFF) ? " (no answer)" : " (unexpected)"));
-        }
-
+    // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
+    // CapCC1101NFC setup exactly. addSPI() resolves the shared Cap-Bus
+    // SPI pins (SCK/MOSI/MISO) itself via M5Unified's board profile for
+    // Cardputer-ADV, and the unit's own constructor already knows its
+    // CS/IRQ pins (G6/G4) - nothing to configure manually here.
+    bool unit_ready = m5::unit::wiring::addSPI(Units, unit, 10000000, 1) && Units.begin();
+    if (!unit_ready) {
+        UIManager::printLine("ST25R3916 init failed");
+        UIManager::printLine("(M5UnitUnified Units.begin())");
         UIManager::printLine("Check: Cap CC1101 seated");
-        UIManager::printLine("firmly? NFC_CS/IRQ correct");
-        UIManager::printLine("in config.h (G6/G4)?");
+        UIManager::printLine("firmly in the Cap-Bus slot?");
         return false;
     }
 
@@ -367,32 +218,32 @@ bool NfcReader::begin() {
         UIManager::printLine("[!] SD card init failed");
     }
 
-    tagActivated = false;
+    UIManager::printLine("ST25R3916 ready");
     UIManager::printLine("Present an NFC-A tag/badge");
     UIManager::printLine("(MIFARE Classic: default-key");
     UIManager::printLine(" sweep runs automatically)");
-    startDiscovery();
     return true;
 }
 
 void NfcReader::loop() {
-    nfc.rfalNfcWorker();
-    UIManager::setStatus(tagActivated ? "Tag detected - processing..." : "Waiting for a tag...");
+    Units.update();
+    UIManager::setStatus("Waiting for a tag...");
 
-    if (!tagActivated) return;
-    tagActivated = false;
-
-    rfalNfcDevice* device = nullptr;
-    if (nfc.rfalNfcGetActiveDevice(&device) == ERR_NONE && device != nullptr) {
-        handleTag(device);
-    } else {
+    PICC picc{};
+    if (!nfc_a.detect(picc, 100)) {
+        return; // no tag this tick - let main.cpp poll the keyboard for ESC
+    }
+    if (!nfc_a.identify(picc) || !nfc_a.reactivate(picc)) {
         UIManager::printLine("[!] Lost tag before it could be read");
+        nfc_a.deactivate();
+        return;
     }
 
-    nfc.rfalNfcDeactivate(false);
-    startDiscovery(); // resume listening for the next tag
+    UIManager::setStatus("Tag detected - processing...");
+    handleTag(picc);
+    nfc_a.deactivate();
 }
 
 void NfcReader::end() {
-    nfc.rfalNfcDeactivate(false);
+    nfc_a.deactivate();
 }

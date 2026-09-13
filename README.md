@@ -36,6 +36,7 @@ are responsible for how you use this code.
 - A LoRa transceiver: SX1262 or SX1276 module/breakout (via SPI)
 - A CC1101 sub-GHz transceiver module (via SPI) - M5Stack's Cap CC1101 also
   carries an ST25R3916 NFC front-end on the same board, used by NFC Tools
+  (driven via M5Stack's own M5UnitUnified + M5Unit-NFC stack)
 - A UART GNSS/GPS module (for the Wardriving module)
 
 `config.h`'s LoRa pin defaults (`LORA_CS_PIN`, `LORA_SPI_*`, etc.) match
@@ -84,12 +85,13 @@ If you're using a different Sub-GHz module/wiring, update the
 switch.
 
 That same Cap CC1101 board also carries the ST25R3916 NFC front-end used
-by **NFC Tools**, on its own CS/IRQ (`NFC_CS_PIN`/`NFC_IRQ_PIN` in
-`config.h`) but the same shared Cap-Bus SPI bus. Those pins happen to
-numerically match `LORA_BUSY_PIN`/`LORA_DIO1_PIN` - not a conflict, for
-the same reason as above: only one cap is ever physically plugged in at
-a time, so it "owns" those pins regardless of which module's macro name
-you look at.
+by **NFC Tools**, on its own CS/IRQ (G6/G4) but the same shared Cap-Bus
+SPI bus - M5Stack's own `m5::unit::CapCC1101NFC` unit class and
+`wiring::addSPI()` helper already know those pins, so `config.h` no
+longer needs to define them itself. G6/G4 happen to numerically match
+`LORA_BUSY_PIN`/`LORA_DIO1_PIN` - not a conflict, for the same reason as
+above: only one cap is ever physically plugged in at a time, so it "owns"
+those pins regardless of which module's macro name you look at.
 
 All pin assignments and RF parameters live in **`src/config.h`** — edit
 that one file to match your actual wiring (Grove port, internal header, or
@@ -104,7 +106,6 @@ same driver interface, so the rest of the LoRa code is unaffected.
 
 ```
 platformio.ini                 Board, framework, and library dependencies
-lib/                            Vendored NFC-RFAL + ST25R3916_ELECHOUSE (see "NFC Tools" below)
 src/
   config.h                     All pin/frequency/threshold macros (edit this for your hardware)
   main.cpp                     Two-level menu state machine, dispatches to modules
@@ -270,17 +271,16 @@ src/
 
    Setup: this module needs the ST25R3916 NFC front-end that ships on the
    **same Cap CC1101 module** as the CC1101 (same Cap-Bus slot/SPI bus,
-   separate CS/IRQ - `NFC_CS_PIN`/`NFC_IRQ_PIN` in `config.h`). It's built
-   on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
-   (`rfal_nfc.h`/`rfal_mf1.h`, from
-   [wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916))
-   rather than a from-scratch ISO14443A/Crypto1 implementation. That
-   library is already **vendored into this repo** under `lib/NFC-RFAL/`
-   and `lib/ST25R3916_ELECHOUSE/` - PlatformIO picks both up automatically
-   (each has its own `library.properties`), no extra install step needed.
-   If you ever need to update it: re-clone the repo above and replace
-   those two folders (its GitHub Actions workflow folder is stripped out;
-   nothing else needs to change).
+   separate CS/IRQ - G6/G4). It's built on M5Stack's own official
+   **M5UnitUnified + M5Unit-NFC** stack
+   ([m5stack/M5Unit-NFC](https://github.com/m5stack/M5Unit-NFC),
+   `m5::unit::CapCC1101NFC` + `m5::nfc::NFCLayerA`) rather than a
+   standalone ST25R3916 Arduino library or a from-scratch
+   ISO14443A/Crypto1 implementation. `platformio.ini` lists it in
+   `lib_deps` (`m5stack/M5Utility`, `m5stack/M5HAL`,
+   `m5stack/M5UnitUnified`, `m5stack/M5Unit-NFC`) - PlatformIO resolves
+   and downloads all four automatically, no vendoring or manual install
+   step needed.
 
    A **known, bounded limitation of this first version**: a full sweep of
    a locked 4K card (40 sectors × 2 key types × the dictionary in
@@ -291,62 +291,32 @@ src/
    that resists every key in it is *not* proven secure, only not
    trivially default-keyed.
 
-   **Licensing note:** `lib/NFC-RFAL` and `lib/ST25R3916_ELECHOUSE` are
-   STMicroelectronics/ELECHOUSE code under ST's own SLA0052 license (see
-   the `LICENSE` file in each folder) - not MIT/Apache like the rest of
-   this project's dependencies. SLA0052 permits redistribution but
-   restricts use to "an integrated circuit that is manufactured by or for
-   STMicroelectronics and is an NFC tag, NFC dynamic tag, NFC reader, or
-   UHF reader" (the ST25R3916 qualifies) and forbids relicensing that code
-   under an open-source license. This only affects those two vendored
-   folders - it doesn't change how you can license the rest of WaveRogue.
-
-   **Troubleshooting "ST25R3916 init failed":** the module now prints the
-   actual `ReturnCode` name/number (from `lib/NFC-RFAL/src/st_errno.h`),
-   not just a generic message. `ERR_IO`/`ERR_TIMEOUT` usually mean the
-   chip never answered at all - double check `NFC_CS_PIN`/`NFC_IRQ_PIN`
-   in `config.h` (G6/G4) against your actual wiring, that the Cap CC1101
-   is seated firmly in the Cap-Bus connector, and that nothing else is
-   driving those two pins at the same time. `ERR_PARAM`/`ERR_REQUEST`
-   point more at a driver/config mismatch than a wiring problem.
-
-   If the module reports `ERR_HW_MISMATCH` with a raw `IC_IDENTITY`
-   register readout of `0x00` (chip completely silent to RFAL, even
-   though a raw pre-reset SPI probe of the same register reads back a
-   valid ID), the following were all identified by diffing against
-   M5Stack's own (unreleased at the time of writing) `M5Unit-NFC`
-   CapCC1101 driver, which is confirmed working on identical hardware:
-
-   1. **Power.** Their driver declares a `POWER_EN` line on G3 for the
-      ST25R3916 front-end. WaveRogue now drives it HIGH before init.
-   2. **Shared-bus deselect.** The Cap CC1101 board carries *both* the
-      CC1101 and the ST25R3916 on one SPI bus. Nothing in the
-      RFAL/ST25R3916 driver ever manages the CC1101's own CS line
-      (`SUBGHZ_CS_PIN`/G5), so WaveRogue now explicitly drives it HIGH
-      to deselect the CC1101 before touching the NFC chip.
-   3. **Defensive reset before init.** M5's bring-up sends
-      `CMD_STOP` (stop all activities/clear FIFO) before ever touching
-      `CMD_SET_DEFAULT`, with a comment noting that without it, residual
-      state from a prior session (no separate hardware reset pin exists
-      - a USB reflash doesn't power-cycle the chip) can make their
-      oscillator-enable step fail. WaveRogue now sends the same `CMD_STOP`
-      right before calling into RFAL's own init.
-   4. **Init retry loop.** RFAL's `rfalNfcInitialize()` checks the chip ID
-      immediately after `CMD_SET_DEFAULT` with no settling delay, which
-      can transiently read back `0x00`. M5's driver retries chip
-      detection 5 times, 20ms apart; WaveRogue now retries the whole
-      `rfalNfcInitialize()` call the same way and logs which attempt
-      succeeded.
-   5. **SPI clock.** Bumped from RFAL's 5 MHz default to 10 MHz, matching
-      M5's own confirmed-working `addSPI(..., 10000000, 1)` call.
-
-   If the chip still reads back all-zero on the very first *manual* SPI
-   probe (before any reset is even sent, and with the CC1101 explicitly
-   deselected), the remaining likely causes are a hardware/soldering
-   fault on the Cap CC1101's NFC-specific lines, or a defective/DOA
-   ST25R3916 front-end on that particular unit - worth a continuity
-   check with a multimeter on G6/G4 between the Cap-Bus connector and the
-   chip if you're comfortable opening the module.
+   **Why M5UnitUnified instead of a standalone ST25R3916 library:** the
+   first version of this module was built on the ESP32-validated
+   "ST25R3916 + NFC-RFAL" Arduino library
+   ([wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916)),
+   vendored directly into `lib/`. On this specific Cap CC1101 +
+   Cardputer-ADV combination it never got the chip to answer through
+   RFAL's own init, despite methodically matching M5's own official
+   (but at the time unreleased) CapCC1101 driver step for step: driving
+   a `POWER_EN` line (G3) HIGH before init, explicitly deselecting the
+   CC1101's CS (G5) so it can't contend on the shared SPI bus, sending
+   the same defensive `CMD_STOP` before `CMD_SET_DEFAULT` that M5's
+   bring-up sends, retrying chip-ID detection the same 5×/20ms-apart way
+   M5's driver does, and matching M5's exact 10 MHz/mode-1 SPI settings.
+   A raw, library-independent SPI register read of `IC_IDENTITY`
+   consistently decoded as a valid ST25R3916 ID (`0x2a` = type 0x28 +
+   revision 2) even while every one of those fixes still left RFAL's own
+   init reporting `ERR_HW_MISMATCH` on a `0x00` read, on every attempt,
+   through a clean rebuild - meaning the chip was genuinely alive and
+   answering, but something specific to RFAL's own init sequence (not
+   power, not bus contention, not pure timing) never got it to respond
+   the same way M5's own library does. Only M5's own stack, confirmed
+   working against identical hardware by direct side-by-side testing,
+   actually talks to the chip reliably - hence the migration, accepting
+   the extra dependency surface (M5Utility/M5HAL/M5UnitUnified transitively
+   pull in their own M5Unified version requirements, resolved alongside
+   M5Cardputer's) in exchange for a front-end that's proven to work here.
 
 ## Keyboard controls
 
@@ -396,6 +366,22 @@ M5Cardputer release still calls, causing a
 M5Unified/M5GFX for some other reason, update `m5stack/M5Cardputer` to a
 release that's actually compatible with it rather than pinning them
 independently.
+
+**NFC Tools' M5UnitUnified dependency and the same risk, one level up:**
+`m5stack/M5UnitUnified` (added for NFC Tools) does not itself pin
+`m5stack/M5Unified` - it only requires *some* compatible version to
+already be present, expecting it via M5Unified's own `M5.begin()` /
+`M5.getBoard()` / `M5.getPin()`, which `M5Cardputer.begin()` (already
+called once at boot in `UIManager::begin()`) already provides. In
+principle PlatformIO reconciles this against the same M5Unified version
+`M5Cardputer` pulls in; this combination is confirmed to build and run on
+real Cardputer-ADV + Cap CC1101 hardware (that's how this migration was
+verified), but if your resolved dependency graph ends up different (a
+lockfile from a much older or newer `M5Cardputer` release, for instance),
+a first build may need `m5stack/M5Cardputer`, `m5stack/M5UnitUnified`,
+and `m5stack/M5Unit-NFC` nudged to versions that all agree on one
+M5Unified release. `rm -rf .pio` plus a fresh `pio run` (as above) is the
+first thing to try if dependency resolution looks stale.
 
 ## A note on scope and honesty
 
