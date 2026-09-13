@@ -82,42 +82,56 @@ namespace {
     // vice-versa) encodes one bit. This is independently implemented from
     // that public timing knowledge - it doesn't try to identify a named
     // protocol or match a per-protocol table, just this one common shape.
+    //
+    // A real remote sends the same frame several times back-to-back per
+    // button press (each repeat separated by another sync gap), so one
+    // capture usually holds multiple copies of the same code. Rather than
+    // decoding only the first frame found, every sync-delimited frame in
+    // the capture is decoded independently and cross-checked against its
+    // neighbor: two consecutive frames agreeing is a much stronger signal
+    // than a single decode, since it rules out a one-off timing glitch
+    // being misread as a bit. `repeatConfirmed` reports which happened.
     // -------------------------------------------------------------------
     struct DecodedCode {
         bool ok = false;
+        bool repeatConfirmed = false;
         uint32_t value = 0;
         uint8_t bitCount = 0;
+        const char* family = "generic PWM";
     };
 
-    DecodedCode tryDecodePwmFixedCode(const uint16_t* pulses, size_t count) {
-        DecodedCode result;
-        if (count < 16) return result; // too short to be a meaningful frame
+    constexpr size_t kMaxSyncCandidates = 17;
 
-        // The sync gap is, by design, much longer than any data pulse -
-        // take the single longest pulse in the capture as its location.
-        size_t syncIdx = 0;
-        uint16_t syncWidth = 0;
-        for (size_t i = 0; i < count; i++) {
-            if (pulses[i] > syncWidth) {
-                syncWidth = pulses[i];
-                syncIdx = i;
-            }
-        }
-        if (syncIdx + 17 > count) return result; // no room for a frame after it
+    // Classifies a decoded bit count against the two most common publicly-
+    // documented fixed-code frame lengths - PT2262/EV1527-compatible
+    // encoders (24 address+data bits) and the Holtek HT12A/HT12E family
+    // (12 address+data bits). Anything else is reported as an unnamed
+    // instance of the same generic short/long-pulse shape rather than
+    // guessed at - this is a bit-count heuristic, not a protocol
+    // fingerprint database.
+    const char* classifyFamily(uint8_t bitCount) {
+        if (bitCount >= 23 && bitCount <= 25) return "PT2262/EV1527-family";
+        if (bitCount >= 11 && bitCount <= 13) return "Holtek HT12x-family";
+        return "generic PWM";
+    }
 
-        const uint16_t* frame = pulses + syncIdx + 1;
-        size_t frameLen = count - syncIdx - 1;
+    // Decodes one sync-delimited frame in isolation: estimates that
+    // frame's own short-pulse width (a capture spanning several repeats
+    // of possibly different transmissions shouldn't assume one timing for
+    // all of them), then reads off short/long bit-pairs until the shape
+    // breaks down or the frame ends.
+    bool decodeOneFrame(const uint16_t* frame, size_t frameLen, uint32_t& outValue, uint8_t& outBits) {
+        if (frameLen < 16) return false;
 
-        // Reference "short" pulse width: median of the frame's pulses that
-        // are clearly shorter than the sync gap (a real bit-pair pulse is
-        // at most ~3x the short pulse, so a third of the sync gap is a
-        // generous cutoff that still excludes stray long pulses).
+        uint16_t frameMax = 0;
+        for (size_t i = 0; i < frameLen; i++) frameMax = max(frameMax, frame[i]);
+
         static uint16_t samples[SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE];
         size_t sampleCount = 0;
         for (size_t i = 0; i < frameLen && sampleCount < SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE; i++) {
-            if (frame[i] < syncWidth / 3) samples[sampleCount++] = frame[i];
+            if (frame[i] < frameMax / 3) samples[sampleCount++] = frame[i];
         }
-        if (sampleCount < 8) return result;
+        if (sampleCount < 8) return false;
 
         for (size_t i = 1; i < sampleCount; i++) {
             uint16_t key = samples[i];
@@ -129,12 +143,12 @@ namespace {
             samples[j] = key;
         }
         uint16_t teShort = samples[sampleCount / 2];
-        if (teShort < 50) return result; // implausibly short for a real pulse
+        if (teShort < 50) return false; // implausibly short for a real pulse
 
         int32_t tol = teShort / 2 + SUBGHZ_AUDIT_MATCH_TOLERANCE_US / 10;
         auto classify = [&](uint16_t w) -> int {
-            if (abs((int32_t)w - (int32_t)teShort) <= tol) return 0;             // "short"
-            if (abs((int32_t)w - (int32_t)teShort * 3) <= tol * 2) return 1;      // "long" (~3x short)
+            if (abs((int32_t)w - (int32_t)teShort) <= tol) return 0;         // "short"
+            if (abs((int32_t)w - (int32_t)teShort * 3) <= tol * 2) return 1; // "long" (~3x short)
             return -1; // doesn't fit this encoding - not our decoder's job
         };
 
@@ -148,10 +162,89 @@ namespace {
             bits++;
         }
 
-        if (bits < 8) return result; // too few clean bits to call this "decoded"
+        if (bits < 8) return false; // too few clean bits to call this "decoded"
+        outValue = value;
+        outBits = bits;
+        return true;
+    }
+
+    DecodedCode tryDecodePwmFixedCode(const uint16_t* pulses, size_t count) {
+        DecodedCode result;
+        if (count < 16) return result; // too short to be a meaningful frame
+
+        // A rough "typical pulse" estimate from the whole capture, just to
+        // set a threshold for what counts as a sync gap - a sync is, by
+        // design, several times longer than any data pulse.
+        static uint16_t rough[SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE];
+        size_t roughCount = min(count, (size_t)SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE);
+        for (size_t i = 0; i < roughCount; i++) rough[i] = pulses[i];
+        for (size_t i = 1; i < roughCount; i++) {
+            uint16_t key = rough[i];
+            size_t j = i;
+            while (j > 0 && rough[j - 1] > key) {
+                rough[j] = rough[j - 1];
+                j--;
+            }
+            rough[j] = key;
+        }
+        uint16_t roughMedian = rough[roughCount / 2];
+        if (roughMedian < 20) return result;
+
+        // Every pulse at least 5x that typical width is a candidate sync
+        // gap - a real transmission's repeats give us several of these,
+        // one per frame boundary.
+        size_t syncIdx[kMaxSyncCandidates];
+        size_t syncCount = 0;
+        for (size_t i = 0; i < count && syncCount < kMaxSyncCandidates; i++) {
+            if (pulses[i] > (uint16_t)(roughMedian * 5)) syncIdx[syncCount++] = i;
+        }
+        if (syncCount == 0) return result; // no plausible frame boundary at all
+
+        // Decode every sync-delimited frame in turn, stopping as soon as
+        // two consecutive frames agree (repeat-confirmed) - otherwise keep
+        // the first frame that decoded cleanly as a best-effort result.
+        bool havePrev = false;
+        uint32_t prevValue = 0;
+        uint8_t prevBits = 0;
+        bool haveBest = false;
+        uint32_t bestValue = 0;
+        uint8_t bestBits = 0;
+
+        // syncCount==1 still gives one frame: everything after that sync.
+        size_t frameStartCount = (syncCount > 1) ? syncCount - 1 : 1;
+        for (size_t f = 0; f < frameStartCount; f++) {
+            size_t frameBegin = syncIdx[f] + 1;
+            size_t frameEnd = (syncCount > 1) ? syncIdx[f + 1] : count;
+            if (frameBegin >= frameEnd) continue;
+
+            uint32_t value = 0;
+            uint8_t bits = 0;
+            if (!decodeOneFrame(pulses + frameBegin, frameEnd - frameBegin, value, bits)) continue;
+
+            if (havePrev && prevValue == value && prevBits == bits) {
+                result.ok = true;
+                result.repeatConfirmed = true;
+                result.value = value;
+                result.bitCount = bits;
+                result.family = classifyFamily(bits);
+                return result;
+            }
+            if (!haveBest) {
+                haveBest = true;
+                bestValue = value;
+                bestBits = bits;
+            }
+            prevValue = value;
+            prevBits = bits;
+            havePrev = true;
+        }
+
+        if (!haveBest) return result; // nothing in any frame decoded cleanly
         result.ok = true;
-        result.value = value;
-        result.bitCount = bits;
+        result.repeatConfirmed = false;
+        result.value = bestValue;
+        result.bitCount = bestBits;
+        result.family = classifyFamily(bestBits);
         return result;
     }
 
@@ -253,6 +346,10 @@ namespace {
         carrierFlaggedThisChannel = false;
     }
 
+    // One-letter tag for the screen's tight width: P=PT2262/EV1527-family,
+    // H=Holtek HT12x-family, G=unclassified generic PWM shape.
+    char familyTag(const char* family) { return family[0] == 'P' ? 'P' : (family[0] == 'H' ? 'H' : 'G'); }
+
     void redrawHistorySummary() {
         UIManager::clearLog();
         UIManager::printLine(String(kBands[(int)currentBand].label) + " audit - " + String(historyCount) +
@@ -270,9 +367,10 @@ namespace {
             char buf[56];
             const CaptureRecord& r = history[i];
             if (r.decoded.ok) {
-                snprintf(buf, sizeof(buf), "%.2fMHz: 0x%lX (%ub) x%d%s", freqForChannel(currentBand, r.channel),
-                         (unsigned long)r.decoded.value, r.decoded.bitCount, r.repeatCount,
-                         r.repeatCount >= 2 ? " STATIC" : "");
+                snprintf(buf, sizeof(buf), "%.2fMHz [%c]: 0x%lX (%ub%s) x%d%s",
+                         freqForChannel(currentBand, r.channel), familyTag(r.decoded.family),
+                         (unsigned long)r.decoded.value, r.decoded.bitCount, r.decoded.repeatConfirmed ? "*" : "",
+                         r.repeatCount, r.repeatCount >= 2 ? " STATIC" : "");
             } else {
                 snprintf(buf, sizeof(buf), "%.2fMHz: raw %up x%d%s", freqForChannel(currentBand, r.channel),
                          (unsigned)r.count, r.repeatCount, r.repeatCount >= 2 ? " STATIC" : "");
@@ -305,7 +403,7 @@ namespace {
             if (history[i].channel != channel) continue;
             if (recordsMatch(history[i], snapshot, copyCount, decoded)) {
                 history[i].repeatCount++;
-                String detail = decoded.ok ? ("0x" + String(decoded.value, HEX) + " repeat")
+                String detail = decoded.ok ? ("0x" + String(decoded.value, HEX) + " " + decoded.family + " repeat")
                                             : (String(copyCount) + "p repeat");
                 logEvent(freq, "REPEAT", detail);
                 redrawHistorySummary();
@@ -326,7 +424,8 @@ namespace {
         history[idx].repeatCount = 1;
         for (size_t i = 0; i < copyCount; i++) history[idx].pulses[i] = snapshot[i];
 
-        String detail = decoded.ok ? ("0x" + String(decoded.value, HEX) + " (" + String(decoded.bitCount) + "b)")
+        String detail = decoded.ok ? ("0x" + String(decoded.value, HEX) + " (" + String(decoded.bitCount) + "b, " +
+                                       decoded.family + (decoded.repeatConfirmed ? ", repeat-confirmed)" : ")"))
                                     : (String(copyCount) + " pulses, unrecognized shape");
         logEvent(freq, "CAPTURE", detail);
         redrawHistorySummary();

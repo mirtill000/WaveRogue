@@ -11,11 +11,16 @@
 //     opposed to a burst of data).
 //   - A burst of OOK/ASK edges is captured in full (raw pulse timing,
 //     direct-mode capture) and run through a generic PWM fixed-code
-//     decoder: if the pulse train looks like a clean short/long-pulse
-//     bitstream with a long sync gap (the pattern used by cheap
-//     PT2262/EV1527-style remotes and countless clones), it's decoded
-//     to a bit value; otherwise the raw capture is kept and reported as
-//     unrecognized.
+//     decoder: every sync-gap-delimited frame in the capture (a button
+//     press usually repeats the same code several times back-to-back) is
+//     decoded independently and cross-checked against its neighbor - two
+//     consecutive frames agreeing is reported as "repeat-confirmed",
+//     a much stronger signal than a single decode. The bit count is also
+//     classified against the two most common public fixed-code frame
+//     lengths (24-bit PT2262/EV1527-family, 12-bit Holtek HT12x-family)
+//     as a label, not a full protocol fingerprint. A pulse train that
+//     doesn't fit this shape at all is kept and reported as unrecognized
+//     raw data rather than forced into a decode.
 //   - Each capture on a given channel is compared against recent history
 //     on that same channel: an exact repeat across separate button
 //     presses flags a static/fixed code (100% replay-vulnerable); a

@@ -202,9 +202,17 @@ looking for activity:
   bug/transmitter rather than a remote or sensor.
 - **Generic PWM fixed-code decode** — every captured burst is run through
   a decoder for the short/long-pulse-with-sync-gap shape used by cheap
-  PT2262/EV1527-style remotes and their countless clones. A clean match
-  decodes to a bit value; anything else is kept and reported as an
-  unrecognized raw pulse train (still fully captured, just not decoded).
+  PT2262/EV1527-style remotes and their countless clones. A real remote
+  usually repeats the same frame several times per button press, so
+  every sync-delimited frame *within* one capture is decoded on its own
+  and cross-checked against its neighbor: two consecutive frames
+  agreeing is reported as **repeat-confirmed** (marked with a trailing
+  `*`), a materially stronger signal than a single decode. The bit count
+  is also labeled against the two most common public fixed-code lengths
+  (24-bit PT2262/EV1527-family, 12-bit Holtek HT12x-family) - a
+  bit-count heuristic, not a full protocol fingerprint database. Anything
+  that doesn't fit this shape at all is kept and reported as unrecognized
+  raw data rather than forced into a decode.
 - **Repeat / rolling-code detection** — each capture on a given channel is
   compared against recent captures on that *same* channel: an exact
   repeat across separate button presses means a static/fixed code
@@ -222,13 +230,18 @@ exposes a 433 MHz path and an 868/915 MHz path in software (see
 this hardware, so that preset tunes through the 433 MHz path instead, with
 reduced range/sensitivity as a result.
 
-The overall sweep/lock/decode/repeat-detect approach follows the same
-general design used by other Sub-GHz auditing tools for Cardputer-class
-hardware (e.g. the CC1101 tooling in
-[Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project)) — the
-architecture and general PT2262/EV1527 timing knowledge are independently
-implemented here rather than copied, since that project's repository
-carries no explicit open-source license.
+The overall sweep/lock/decode/repeat-detect approach - including
+decoding every repeat of a captured frame independently and
+cross-checking them against each other for higher-confidence results -
+follows the same general design used by other Sub-GHz auditing tools for
+Cardputer-class hardware (e.g. the CC1101 tooling in
+[Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project), which
+uses a richer table-driven multi-protocol decoder built on the same
+idea). That architecture and general PT2262/EV1527/Holtek HT12x public
+timing facts are independently implemented here rather than copied,
+since that project's repository carries no explicit open-source license
+- WaveRogue's decoder is deliberately simpler (one generic shape plus a
+bit-count family label, not a maintained per-protocol table).
 
 ## NFC Tools
 
