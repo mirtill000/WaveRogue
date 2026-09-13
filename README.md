@@ -311,30 +311,34 @@ src/
    point more at a driver/config mismatch than a wiring problem.
 
    If the module reports `ERR_HW_MISMATCH` with a raw `IC_IDENTITY`
-   register readout of `0x00` (chip completely silent), three things
-   fixed this on the hardware this was diagnosed against:
+   register readout of `0x00` (chip completely silent to RFAL, even
+   though a raw pre-reset SPI probe of the same register reads back a
+   valid ID), the following were all identified by diffing against
+   M5Stack's own (unreleased at the time of writing) `M5Unit-NFC`
+   CapCC1101 driver, which is confirmed working on identical hardware:
 
-   1. **Power.** M5Stack's own (unreleased at the time of writing)
-      `M5Unit-NFC` CapCC1101 driver declares a `POWER_EN` line on G3 for
-      the ST25R3916 front-end. WaveRogue now drives it HIGH before init.
-      Without it the chip answered nothing at all, on any probe.
-   2. **Shared-bus contention with the CC1101.** Unlike the Cap LoRa-1262
-      (a separate, mutually-exclusive cap), the Cap CC1101 board carries
-      *both* the CC1101 and the ST25R3916 at once, sharing one SPI bus.
-      The RFAL/ST25R3916 driver only ever manages its own CS line
-      (`NFC_CS_PIN`/G6) - it never touches the CC1101's CS
-      (`SUBGHZ_CS_PIN`/G5). If that line is left floating or low, the
-      CC1101 can drive the shared MISO line at the same time and corrupt
-      every NFC transaction. `NfcReader::begin()` now explicitly drives
-      G5 HIGH to deselect the CC1101 before touching the NFC chip at all.
-   3. **A post-reset settling race.** RFAL's `rfalNfcInitialize()` issues
-      a soft-reset command (`CMD_SET_DEFAULT`) and checks the chip ID
-      almost immediately afterwards, with no delay in between - so a
-      single check can land inside the chip's reset window and read back
-      `0x00` even though the chip is otherwise fine. M5's own driver
-      defends against this with a 5-attempt/20ms-apart retry loop;
-      WaveRogue's `NfcReader::begin()` now does the same around the
-      whole `rfalNfcInitialize()` call, and logs which attempt it took.
+   1. **Power.** Their driver declares a `POWER_EN` line on G3 for the
+      ST25R3916 front-end. WaveRogue now drives it HIGH before init.
+   2. **Shared-bus deselect.** The Cap CC1101 board carries *both* the
+      CC1101 and the ST25R3916 on one SPI bus. Nothing in the
+      RFAL/ST25R3916 driver ever manages the CC1101's own CS line
+      (`SUBGHZ_CS_PIN`/G5), so WaveRogue now explicitly drives it HIGH
+      to deselect the CC1101 before touching the NFC chip.
+   3. **Defensive reset before init.** M5's bring-up sends
+      `CMD_STOP` (stop all activities/clear FIFO) before ever touching
+      `CMD_SET_DEFAULT`, with a comment noting that without it, residual
+      state from a prior session (no separate hardware reset pin exists
+      - a USB reflash doesn't power-cycle the chip) can make their
+      oscillator-enable step fail. WaveRogue now sends the same `CMD_STOP`
+      right before calling into RFAL's own init.
+   4. **Init retry loop.** RFAL's `rfalNfcInitialize()` checks the chip ID
+      immediately after `CMD_SET_DEFAULT` with no settling delay, which
+      can transiently read back `0x00`. M5's driver retries chip
+      detection 5 times, 20ms apart; WaveRogue now retries the whole
+      `rfalNfcInitialize()` call the same way and logs which attempt
+      succeeded.
+   5. **SPI clock.** Bumped from RFAL's 5 MHz default to 10 MHz, matching
+      M5's own confirmed-working `addSPI(..., 10000000, 1)` call.
 
    If the chip still reads back all-zero on the very first *manual* SPI
    probe (before any reset is even sent, and with the CC1101 explicitly

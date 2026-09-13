@@ -16,7 +16,9 @@
 
 namespace {
     SPIClass nfcSPI(HSPI);
-    RfalRfST25R3916Class nfcHwReader(&nfcSPI, NFC_CS_PIN, NFC_IRQ_PIN);
+    // 10 MHz to match M5's own confirmed-working CapCC1101 NFC reference
+    // (their addSPI(..., 10000000, 1) call) instead of RFAL's 5 MHz default.
+    RfalRfST25R3916Class nfcHwReader(&nfcSPI, NFC_CS_PIN, NFC_IRQ_PIN, 10000000UL);
     RfalNfcClass nfc(&nfcHwReader);
     RfalMf1Class mf1(&nfcHwReader);
 
@@ -308,6 +310,18 @@ bool NfcReader::begin() {
     digitalWrite(NFC_CS_PIN, HIGH);
     nfcSPI.endTransaction();
     UIManager::printLine("Manual SPI probe: 0x" + String(manualProbeId, HEX));
+
+    // Defensive reset, ported from M5's own CapCC1101 bring-up sequence:
+    // stop any leftover RF field/TX/RX activity from a prior session
+    // (the chip has no hardware reset pin here - POWER_EN is the closest
+    // thing, and a firmware re-flash over USB doesn't power-cycle it) so
+    // it can't interfere with what rfalNfcInitialize() does next. M5's
+    // comment on this step is telling: without it, their oscillator
+    // enable step can fail on a warm boot due to this exact residual
+    // state - plausibly the same reason our chip-ID check has been
+    // reading back 0x00 immediately after RFAL's own CMD_SET_DEFAULT.
+    nfcHwReader.st25r3916ExecuteCommand(ST25R3916_CMD_STOP);
+    delay(2);
 
     // rfalNfcInitialize() issues CMD_SET_DEFAULT (a soft reset) and then
     // checks the chip ID almost immediately afterwards, with no settling
