@@ -193,9 +193,22 @@ fit on screen.
 ## Building
 
 ```
-pio run                 # build
-pio run -t upload       # flash
-pio device monitor      # serial log (115200 baud)
+pio run -e cardputer               # build (the only env is "cardputer", so plain `pio run` also works)
+pio run -e cardputer -t upload     # flash
+pio device monitor                 # serial log (115200 baud)
+```
+
+The `espressif32` platform version is pinned in `platformio.ini` to the
+arduino-esp32 2.x / ESP-IDF 4.4 generation, which is what M5GFX/M5Unified/
+M5Cardputer are built against. Newer platform releases jump to
+arduino-esp32 3.x (IDF 5.x) and fail to build these libraries with an
+`i2c_periph_signal_t ... has no member named 'module'` error. If a build
+still fails on the pinned version (e.g. after a prior `pio run` cached a
+different platform), clear the local build/package cache first:
+
+```
+rm -rf .pio
+pio run -e cardputer
 ```
 
 ## A note on scope and honesty
