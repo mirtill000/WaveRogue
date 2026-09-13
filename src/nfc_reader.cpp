@@ -202,8 +202,7 @@ bool NfcReader::begin() {
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
 
-    // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
-    // CapCC1101NFC setup exactly. addSPI() resolves the shared Cap-Bus
+    // SPI mode 1 (CPOL=0, CPHA=1). addSPI() resolves the shared Cap-Bus
     // SPI pins (SCK/MOSI/MISO) itself via M5Unified's board profile
     // (M5.getBoard()/M5.getPin()), and the unit's own constructor
     // already knows its CS/IRQ pins (G6/G4) - nothing to configure
@@ -215,7 +214,18 @@ bool NfcReader::begin() {
     UIManager::printLine("SPI: sck=" + String(spiPinInfo.sclk) + " miso=" + String(spiPinInfo.miso) +
                           " mosi=" + String(spiPinInfo.mosi));
 
-    bool spiAdded = m5::unit::wiring::addSPI(Units, unit, 10000000, 1);
+    // Clock dropped from M5's own reference speed (10 MHz) to 1 MHz:
+    // at 10 MHz, M5's own chip-ID check read the IC_IDENTITY register as
+    // type=03,rev=06 (raw byte 0x1E) - garbage, and RFAL's earlier
+    // attempt at the same 10 MHz read back 0x00 outright. A raw,
+    // library-independent 1 MHz SPI probe run earlier against this same
+    // register consistently read back a valid-looking ID (0x2a) on two
+    // separate occasions. Three different raw values across three SPI
+    // setups reading the same register looks like a signal-integrity
+    // problem at higher clock speeds on this specific wiring, not a
+    // software bug - try the speed that has actually produced a
+    // plausible reading so far.
+    bool spiAdded = m5::unit::wiring::addSPI(Units, unit, 1000000, 1);
     UIManager::printLine(String("addSPI: ") + (spiAdded ? "ok" : "FAILED"));
     bool unitsBegan = spiAdded && Units.begin();
     if (spiAdded) {
