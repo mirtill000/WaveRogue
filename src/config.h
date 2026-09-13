@@ -107,6 +107,11 @@
 #define NFC_POWER_EN_PIN 3
 // Where per-tag dumps are saved (one file per UID, re-scanning updates it).
 #define NFC_DUMP_DIR "/nfc"
+// Optional extra MIFARE Classic keys, one per line (plain hex or
+// ':'/'-'/space-separated), loaded from the SD card root on top of the
+// built-in dictionary if present. A missing file is not an error.
+#define NFC_WORDLIST_PATH "/nfc-wordlist.txt"
+#define NFC_WORDLIST_MAX_KEYS 500
 
 // -----------------------------------------------------------------------
 // GNSS (GPS) module - plain UART, e.g. on the Grove port (G1/G2).

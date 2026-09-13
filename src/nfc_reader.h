@@ -11,10 +11,13 @@
 // Flow, on every tag presented:
 //   1. Poll for an NFC-A tag; report UID/ATQA/SAK/type.
 //   2. If it's a recognized MIFARE Classic variant (Mini/1K/4K), sweep
-//      every sector against a small dictionary of widely-published
-//      default/well-known keys (Key A and Key B) - the same kind of seed
-//      dictionary shipped by common open-source MIFARE auditing tools
-//      (e.g. mfoc, libnfc's nfc-mfclassic). Flags each sector as cracked
+//      every sector against a 50-key built-in dictionary of widely-
+//      published default/well-known/pattern keys (Key A and Key B) -
+//      the same kind of seed dictionary shipped by common open-source
+//      MIFARE auditing tools (e.g. mfoc, libnfc's nfc-mfclassic) - plus
+//      any extra keys loaded from an optional /nfc-wordlist.txt on the
+//      SD card (one key per line, plain hex or ':'/'-'/space-separated;
+//      see config.h's NFC_WORDLIST_PATH). Flags each sector as cracked
 //      (with which key) or still locked.
 //   3. For each cracked sector, reads its data blocks and appends them to
 //      a per-UID dump file on the SD card (/nfc/<UID>.txt) - the

@@ -5,6 +5,10 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <string.h>
+#include <cctype>
+#include <cstdlib>
+#include <vector>
+#include <array>
 
 // M5Unified.h must come first: wiring/m5_unit_unified_wiring.hpp calls
 // M5.getBoard()/M5.getPin() but doesn't include M5Unified.h itself - it
@@ -34,11 +38,14 @@ namespace {
     bool chipInitialized = false;
 
     // -------------------------------------------------------------------
-    // A small, widely-published dictionary of MIFARE Classic default/
-    // well-known keys - the same seed set shipped by common open-source
-    // auditing tools (mfoc, libnfc's nfc-mfclassic). Not exhaustive: a
-    // sector that resists all of these is NOT proven secure, only not
-    // trivially default-keyed.
+    // A dictionary of MIFARE Classic default/well-known/pattern keys -
+    // the same kind of seed set shipped by common open-source auditing
+    // tools (mfoc, libnfc's nfc-mfclassic). Not exhaustive: a sector that
+    // resists all of these (and the SD wordlist below) is NOT proven
+    // secure, only not trivially default-keyed. Entries labeled "pattern"
+    // are trivially-guessable byte patterns rather than confirmed
+    // real-world keys - included because some deployments really do use
+    // them, not because they're independently documented defaults.
     // -------------------------------------------------------------------
     struct DictKey {
         uint8_t key[6];
@@ -58,8 +65,50 @@ namespace {
         {{0xA0, 0x47, 0x8C, 0xC3, 0x90, 0x91}, "common default"},
         {{0x53, 0x3C, 0xB6, 0xC7, 0x23, 0xF6}, "common default"},
         {{0x8F, 0xD0, 0xA4, 0xF2, 0x56, 0xE9}, "common default"},
+        {{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}, "pattern"},
+        {{0x01, 0x01, 0x01, 0x01, 0x01, 0x01}, "pattern"},
+        {{0x11, 0x11, 0x11, 0x11, 0x11, 0x11}, "pattern"},
+        {{0x22, 0x22, 0x22, 0x22, 0x22, 0x22}, "pattern"},
+        {{0x33, 0x33, 0x33, 0x33, 0x33, 0x33}, "pattern"},
+        {{0x44, 0x44, 0x44, 0x44, 0x44, 0x44}, "pattern"},
+        {{0x55, 0x55, 0x55, 0x55, 0x55, 0x55}, "pattern"},
+        {{0x66, 0x66, 0x66, 0x66, 0x66, 0x66}, "pattern"},
+        {{0x77, 0x77, 0x77, 0x77, 0x77, 0x77}, "pattern"},
+        {{0x88, 0x88, 0x88, 0x88, 0x88, 0x88}, "pattern"},
+        {{0x99, 0x99, 0x99, 0x99, 0x99, 0x99}, "pattern"},
+        {{0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA}, "pattern"},
+        {{0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB}, "pattern"},
+        {{0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC}, "pattern"},
+        {{0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD}, "pattern"},
+        {{0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE}, "pattern"},
+        {{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC}, "pattern"},
+        {{0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45}, "pattern"},
+        {{0x01, 0x23, 0x45, 0x67, 0x89, 0xAB}, "pattern"},
+        {{0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54}, "pattern"},
+        {{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}, "pattern"},
+        {{0x06, 0x05, 0x04, 0x03, 0x02, 0x01}, "pattern"},
+        {{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}, "pattern"},
+        {{0x66, 0x55, 0x44, 0x33, 0x22, 0x11}, "pattern"},
+        {{0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22}, "pattern"},
+        {{0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00}, "pattern"},
+        {{0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF}, "pattern"},
+        {{0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00}, "pattern"},
+        {{0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF}, "pattern"},
+        {{0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5}, "pattern"},
+        {{0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A}, "pattern"},
+        {{0x12, 0x34, 0x56, 0x78, 0x90, 0xAB}, "pattern"},
+        {{0x99, 0x88, 0x77, 0x66, 0x55, 0x44}, "pattern"},
+        {{0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}, "pattern"},
+        {{0xFF, 0x00, 0x00, 0x00, 0x00, 0x00}, "pattern"},
+        {{0x12, 0x31, 0x23, 0x12, 0x31, 0x23}, "pattern"},
+        {{0xAB, 0xCA, 0xBC, 0xAB, 0xCA, 0xBC}, "pattern"},
     };
     constexpr size_t kNumDefaultKeys = sizeof(kDefaultKeys) / sizeof(kDefaultKeys[0]);
+
+    // Extra keys loaded from an optional SD wordlist (see
+    // loadWordlistFromSd() below) - tried after the built-in dictionary,
+    // for every sector, on top of it.
+    std::vector<std::array<uint8_t, 6>> wordlistKeys;
 
     Key toKey(const uint8_t* b) {
         Key k;
@@ -79,13 +128,107 @@ namespace {
         }
     }
 
+    // Parses one wordlist line into a 6-byte key. Accepts plain hex
+    // ("FFFFFFFFFFFF") or hex separated by ':'/'-'/space
+    // ("FF:FF:FF:FF:FF:FF"); blank lines and lines starting with '#' are
+    // skipped. Returns false for anything else (malformed line, wrong
+    // length) so the loader can just skip it rather than fail the load.
+    bool parseHexKey(String line, uint8_t out[6]) {
+        line.trim();
+        if (line.length() == 0 || line.startsWith("#")) return false;
+
+        String hex;
+        hex.reserve(12);
+        for (size_t i = 0; i < line.length(); i++) {
+            char c = line[i];
+            if (isxdigit((unsigned char)c)) {
+                hex += c;
+            } else if (c != ':' && c != '-' && c != ' ') {
+                return false; // unexpected character - malformed line
+            }
+        }
+        if (hex.length() != 12) return false;
+
+        for (int i = 0; i < 6; i++) {
+            out[i] = (uint8_t)strtoul(hex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
+        }
+        return true;
+    }
+
+    // Loads extra keys from NFC_WORDLIST_PATH on the SD card, if present,
+    // into wordlistKeys - one call per boot, right after SD.begin()
+    // succeeds. A missing file is not an error; it's the expected case
+    // when someone hasn't dropped one on the card.
+    void loadWordlistFromSd() {
+        wordlistKeys.clear();
+        if (!sdReady || !SD.exists(NFC_WORDLIST_PATH)) return;
+
+        File f = SD.open(NFC_WORDLIST_PATH);
+        if (!f) return;
+
+        while (f.available() && wordlistKeys.size() < NFC_WORDLIST_MAX_KEYS) {
+            String line = f.readStringUntil('\n');
+            uint8_t key[6];
+            if (parseHexKey(line, key)) {
+                std::array<uint8_t, 6> k;
+                memcpy(k.data(), key, 6);
+                wordlistKeys.push_back(k);
+            }
+        }
+        f.close();
+
+        UIManager::printLine(String(wordlistKeys.size()) + " keys loaded from " + NFC_WORDLIST_PATH);
+    }
+
+    // Called once a sector's trailer has been authenticated with
+    // `keyBytes`: logs the find, reads every block in the sector into
+    // `f`, and (once per whole sweep) runs the write-access self-test on
+    // the first ordinary block it can reach.
+    void reportCracked(int s, uint8_t trailer, const char* ktName, const uint8_t* keyBytes, const char* label,
+                        File& f, bool& wroteWriteTest) {
+        String keyHex = RfUtils::bytesToHex(keyBytes, 6);
+        UIManager::printLine("Sector " + String(s) + ": key " + String(ktName) + "=" + keyHex);
+        logSdLine(f, "sector," + String(s) + ",cracked," + String(ktName) + "," + keyHex + "," + label);
+
+        int firstBlk = (s < 32) ? s * 4 : 128 + (s - 32) * 16;
+        int nBlk = (s < 32) ? 4 : 16;
+        for (int b = 0; b < nBlk; b++) {
+            uint8_t blockNo = (uint8_t)(firstBlk + b);
+            uint8_t data[16];
+            if (!nfc_a.read16(data, blockNo)) continue;
+
+            logSdLine(f, "block," + String(blockNo) + "," + RfUtils::bytesToHex(data, 16));
+
+            // One-time write-access self-test: write the block's own
+            // bytes back unchanged, then read them again to confirm -
+            // proves the write path works without ever changing tag
+            // content. Skip the trailer (holds the keys/access bits) and
+            // block 0 of sector 0 (hardware-locked manufacturer block on
+            // genuine cards).
+            bool isManufacturerBlock = (s == 0 && b == 0);
+            if (!wroteWriteTest && blockNo != trailer && !isManufacturerBlock) {
+                wroteWriteTest = true;
+                uint8_t verify[16];
+                bool ok = nfc_a.write16(blockNo, data, 16) &&
+                          nfc_a.read16(verify, blockNo) &&
+                          memcmp(data, verify, 16) == 0;
+                UIManager::printLine(ok ? "Write-access test: OK" : "Write-access test: FAILED");
+                logSdLine(f, String("write_test,") + (ok ? "ok" : "failed"));
+            }
+        }
+    }
+
     // Sweeps every sector of a detected MIFARE Classic card against the
-    // default-key dictionary, dumping cracked sectors to `f` and running
-    // one write-access self-test along the way.
+    // built-in dictionary plus any keys loaded from an SD wordlist,
+    // dumping cracked sectors to `f` and running one write-access
+    // self-test along the way.
     void sweepMifareClassic(const PICC& picc, File& f) {
         int nSectors = (int)get_sector(picc.blocks - 1) + 1;
         UIManager::printLine("MIFARE Classic (" + String(nSectors) + " sectors)");
         logSdLine(f, "type,mifare_classic,sectors," + String(nSectors));
+        if (!wordlistKeys.empty()) {
+            UIManager::printLine("+" + String(wordlistKeys.size()) + " keys from SD wordlist");
+        }
 
         int cracked = 0;
         bool wroteWriteTest = false;
@@ -95,10 +238,11 @@ namespace {
         // which returns quickly and lets main.cpp's per-tick
         // UIManager::pollInput() keep ESC responsive between calls.
         // Worst case (a fully-locked 4K card: 40 sectors x 2 key types x
-        // the dictionary below) is on the order of tens of seconds, not
-        // interruptible mid-sweep in this first version - a documented
-        // simplification, not an oversight. The status bar still updates
-        // per sector so it's clear the device hasn't frozen.
+        // the whole dictionary, plus any wordlist) can run well past a
+        // minute and isn't interruptible mid-sweep in this first version
+        // - a documented simplification, not an oversight. The status
+        // bar still updates per sector so it's clear the device hasn't
+        // frozen.
         for (int s = 0; s < nSectors; s++) {
             UIManager::setStatus("Sector " + String(s + 1) + "/" + String(nSectors) + " - trying default keys...");
 
@@ -107,45 +251,19 @@ namespace {
 
             for (int kt = 0; kt < 2 && !sectorCracked; kt++) {
                 bool useKeyB = (kt == 1);
-                for (size_t k = 0; k < kNumDefaultKeys && !sectorCracked; k++) {
-                    Key key = toKey(kDefaultKeys[k].key);
-                    if (!authenticate(trailer, key, useKeyB)) continue;
+                const char* ktName = useKeyB ? "B" : "A";
 
+                for (size_t k = 0; k < kNumDefaultKeys && !sectorCracked; k++) {
+                    if (!authenticate(trailer, toKey(kDefaultKeys[k].key), useKeyB)) continue;
                     sectorCracked = true;
                     cracked++;
-                    String keyHex = RfUtils::bytesToHex(kDefaultKeys[k].key, 6);
-                    const char* ktName = useKeyB ? "B" : "A";
-                    UIManager::printLine("Sector " + String(s) + ": key " + String(ktName) + "=" + keyHex);
-                    logSdLine(f, "sector," + String(s) + ",cracked," + String(ktName) + "," + keyHex + "," +
-                                     kDefaultKeys[k].label);
-
-                    int firstBlk = (s < 32) ? s * 4 : 128 + (s - 32) * 16;
-                    int nBlk = (s < 32) ? 4 : 16;
-                    for (int b = 0; b < nBlk; b++) {
-                        uint8_t blockNo = (uint8_t)(firstBlk + b);
-                        uint8_t data[16];
-                        if (!nfc_a.read16(data, blockNo)) continue;
-
-                        logSdLine(f, "block," + String(blockNo) + "," + RfUtils::bytesToHex(data, 16));
-
-                        // One-time write-access self-test: write the
-                        // block's own bytes back unchanged, then read
-                        // them again to confirm - proves the write path
-                        // works without ever changing tag content. Skip
-                        // the trailer (holds the keys/access bits) and
-                        // block 0 of sector 0 (hardware-locked
-                        // manufacturer block on genuine cards).
-                        bool isManufacturerBlock = (s == 0 && b == 0);
-                        if (!wroteWriteTest && blockNo != trailer && !isManufacturerBlock) {
-                            wroteWriteTest = true;
-                            uint8_t verify[16];
-                            bool ok = nfc_a.write16(blockNo, data, 16) &&
-                                      nfc_a.read16(verify, blockNo) &&
-                                      memcmp(data, verify, 16) == 0;
-                            UIManager::printLine(ok ? "Write-access test: OK" : "Write-access test: FAILED");
-                            logSdLine(f, String("write_test,") + (ok ? "ok" : "failed"));
-                        }
-                    }
+                    reportCracked(s, trailer, ktName, kDefaultKeys[k].key, kDefaultKeys[k].label, f, wroteWriteTest);
+                }
+                for (size_t k = 0; k < wordlistKeys.size() && !sectorCracked; k++) {
+                    if (!authenticate(trailer, toKey(wordlistKeys[k].data()), useKeyB)) continue;
+                    sectorCracked = true;
+                    cracked++;
+                    reportCracked(s, trailer, ktName, wordlistKeys[k].data(), "SD wordlist", f, wroteWriteTest);
                 }
             }
 
@@ -242,6 +360,7 @@ bool NfcReader::begin() {
     sdReady = SD.begin(SD_CS_PIN);
     if (sdReady) {
         SD.mkdir(NFC_DUMP_DIR);
+        loadWordlistFromSd();
     } else {
         UIManager::printLine("[!] SD card init failed");
     }

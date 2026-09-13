@@ -258,17 +258,23 @@ src/
 
 1. **NFC Reader/Writer** — polls for NFC-A tags/badges and reports
    UID/ATQA/SAK. If the SAK matches a MIFARE Classic variant (Mini/1K/4K),
-   it automatically sweeps every sector against a small dictionary of
-   widely-published default/well-known keys (Key A and Key B alike) - the
-   same kind of seed dictionary shipped by common open-source MIFARE
-   auditing tools (mfoc, libnfc's `nfc-mfclassic`). Any cracked sector is
-   read and appended to a per-UID dump file on the SD card
-   (`/nfc/<UID>.txt`, rewritten fresh on every re-scan of the same tag),
-   and the module runs a one-time **write-access self-test** on the first
-   ordinary data block it can reach - it writes the block's own bytes back
-   unchanged and reads them again to confirm the write path genuinely
-   works, without ever changing what's stored on the tag. A tag that
-   isn't a recognized MIFARE Classic SAK is still logged (UID/ATQA/SAK
+   it automatically sweeps every sector against a **50-key built-in
+   dictionary** of widely-published default/well-known/pattern keys (Key A
+   and Key B alike) - the same kind of seed dictionary shipped by common
+   open-source MIFARE auditing tools (mfoc, libnfc's `nfc-mfclassic`) -
+   plus any extra keys loaded from an optional **`/nfc-wordlist.txt`** on
+   the SD card root, tried after the built-in dictionary on every sector.
+   One key per line, as plain hex (`FFFFFFFFFFFF`) or hex separated by
+   `:`/`-`/space (`FF:FF:FF:FF:FF:FF`); blank lines and lines starting
+   with `#` are skipped, and a missing file is not an error (up to
+   `NFC_WORDLIST_MAX_KEYS` = 500 keys are loaded, see `config.h`). Any
+   cracked sector is read and appended to a per-UID dump file on the SD
+   card (`/nfc/<UID>.txt`, rewritten fresh on every re-scan of the same
+   tag), and the module runs a one-time **write-access self-test** on the
+   first ordinary data block it can reach - it writes the block's own
+   bytes back unchanged and reads them again to confirm the write path
+   genuinely works, without ever changing what's stored on the tag. A tag
+   that isn't a recognized MIFARE Classic SAK is still logged (UID/ATQA/SAK
    only) - this is a generic NFC-A reader first, a MIFARE Classic auditor
    second.
 
@@ -286,13 +292,13 @@ src/
    step needed.
 
    A **known, bounded limitation of this first version**: a full sweep of
-   a locked 4K card (40 sectors × 2 key types × the dictionary in
-   `nfc_reader.cpp`) can take on the order of tens of seconds and isn't
-   interruptible mid-sweep - the status bar keeps updating per sector so
-   it's clear the device hasn't frozen. The dictionary itself is
-   intentionally small and clearly labeled as non-exhaustive: a sector
-   that resists every key in it is *not* proven secure, only not
-   trivially default-keyed.
+   a locked 4K card (40 sectors × 2 key types × the built-in 50-key
+   dictionary, plus any SD wordlist) isn't interruptible mid-sweep and
+   can run well past a minute the larger the wordlist gets - the status
+   bar keeps updating per sector so it's clear the device hasn't frozen.
+   Even a 50-key dictionary plus a large wordlist is still not
+   exhaustive: a sector that resists every key tried is *not* proven
+   secure, only not trivially default-keyed.
 
    **Two hardware quirks this module works around**, both worth knowing
    if you're porting it to different Cap CC1101 wiring:
