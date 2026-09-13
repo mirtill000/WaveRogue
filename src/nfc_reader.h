@@ -18,7 +18,11 @@
 //      any extra keys loaded from an optional /nfc-wordlist.txt on the
 //      SD card (one key per line, plain hex or ':'/'-'/space-separated;
 //      see config.h's NFC_WORDLIST_PATH). Flags each sector as cracked
-//      (with which key) or still locked.
+//      (with which key) or still locked. Every failed key attempt
+//      reactivates the tag (HLTA + WUPA + re-select) before the next
+//      try - a real MIFARE Classic tag needs that fresh select cycle
+//      after a rejected auth or every attempt after the first wrong
+//      guess silently keeps failing, even ones with the right key.
 //   3. For each cracked sector, reads its data blocks and appends them to
 //      a per-UID dump file on the SD card (/nfc/<UID>.txt) - the
 //      "reader" half.

@@ -262,6 +262,25 @@ namespace {
                         : nfc_a.mifareClassicAuthenticateA(block, key);
     }
 
+    // Tries one key against `trailer`. On failure, reactivates the tag
+    // (HLTA + WUPA + re-select) before returning, since a real MIFARE
+    // Classic tag needs a fresh select cycle after a rejected 3-pass
+    // auth before it will accept another Auth attempt at all - without
+    // this, only the very first key/key-type tried per sector could ever
+    // succeed, and every attempt after one wrong guess would silently
+    // keep failing even if the right key came later in the dictionary.
+    // Evil-M5Project's own from-scratch Crypto1 implementation for this
+    // same ST25R3916 hardware does the equivalent (a full field/anti-
+    // collision reset after every failed key), which is what pointed at
+    // this as the likely cause of "only default-keyed sectors ever crack".
+    // Returns false either way (wrong key, or the tag was lost/removed -
+    // `tagLost` distinguishes the two so the caller can stop the sweep).
+    bool tryKeyAndRecover(const PICC& picc, uint8_t trailer, const Key& key, bool useKeyB, bool& tagLost) {
+        if (authenticate(trailer, key, useKeyB)) return true;
+        if (!nfc_a.reactivate(picc)) tagLost = true;
+        return false;
+    }
+
     void logSdLine(File& f, const String& line) {
         if (f) {
             f.println(line);
@@ -373,6 +392,7 @@ namespace {
 
         int cracked = 0;
         bool wroteWriteTest = false;
+        bool tagLost = false;
 
         // NOTE: a full sweep runs to completion inside this one
         // NfcReader::loop() call, unlike every other module's loop(),
@@ -384,35 +404,39 @@ namespace {
         // - a documented simplification, not an oversight. The status
         // bar still updates per sector so it's clear the device hasn't
         // frozen.
-        for (int s = 0; s < nSectors; s++) {
+        for (int s = 0; s < nSectors && !tagLost; s++) {
             UIManager::setStatus("Sector " + String(s + 1) + "/" + String(nSectors) + " - trying default keys...");
 
             uint8_t trailer = (uint8_t)get_sector_trailer_block_from_sector((uint16_t)s);
             bool sectorCracked = false;
 
-            for (int kt = 0; kt < 2 && !sectorCracked; kt++) {
+            for (int kt = 0; kt < 2 && !sectorCracked && !tagLost; kt++) {
                 bool useKeyB = (kt == 1);
                 const char* ktName = useKeyB ? "B" : "A";
 
-                for (size_t k = 0; k < kNumDefaultKeys && !sectorCracked; k++) {
-                    if (!authenticate(trailer, toKey(kDefaultKeys[k].key), useKeyB)) continue;
+                for (size_t k = 0; k < kNumDefaultKeys && !sectorCracked && !tagLost; k++) {
+                    if (!tryKeyAndRecover(picc, trailer, toKey(kDefaultKeys[k].key), useKeyB, tagLost)) continue;
                     sectorCracked = true;
                     cracked++;
                     reportCracked(s, trailer, ktName, kDefaultKeys[k].key, kDefaultKeys[k].label, f, wroteWriteTest);
                 }
-                for (size_t k = 0; k < wordlistKeys.size() && !sectorCracked; k++) {
-                    if (!authenticate(trailer, toKey(wordlistKeys[k].data()), useKeyB)) continue;
+                for (size_t k = 0; k < wordlistKeys.size() && !sectorCracked && !tagLost; k++) {
+                    if (!tryKeyAndRecover(picc, trailer, toKey(wordlistKeys[k].data()), useKeyB, tagLost)) continue;
                     sectorCracked = true;
                     cracked++;
                     reportCracked(s, trailer, ktName, wordlistKeys[k].data(), "SD wordlist", f, wroteWriteTest);
                 }
             }
 
-            if (!sectorCracked) {
+            if (!sectorCracked && !tagLost) {
                 logSdLine(f, "sector," + String(s) + ",locked");
             }
         }
 
+        if (tagLost) {
+            UIManager::printLine("[!] Lost tag mid-sweep");
+            logSdLine(f, "error,lost_tag_mid_sweep");
+        }
         UIManager::printLine(String(cracked) + "/" + String(nSectors) + " sectors cracked");
         logSdLine(f, "summary,cracked," + String(cracked) + ",total," + String(nSectors));
     }
