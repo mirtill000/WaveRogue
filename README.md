@@ -291,32 +291,54 @@ src/
    that resists every key in it is *not* proven secure, only not
    trivially default-keyed.
 
-   **Why M5UnitUnified instead of a standalone ST25R3916 library:** the
-   first version of this module was built on the ESP32-validated
-   "ST25R3916 + NFC-RFAL" Arduino library
+   **Why M5UnitUnified instead of a standalone ST25R3916 library, and a
+   likely hardware conclusion:** the first version of this module was
+   built on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
    ([wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916)),
    vendored directly into `lib/`. On this specific Cap CC1101 +
-   Cardputer-ADV combination it never got the chip to answer through
-   RFAL's own init, despite methodically matching M5's own official
-   (but at the time unreleased) CapCC1101 driver step for step: driving
-   a `POWER_EN` line (G3) HIGH before init, explicitly deselecting the
-   CC1101's CS (G5) so it can't contend on the shared SPI bus, sending
-   the same defensive `CMD_STOP` before `CMD_SET_DEFAULT` that M5's
-   bring-up sends, retrying chip-ID detection the same 5×/20ms-apart way
-   M5's driver does, and matching M5's exact 10 MHz/mode-1 SPI settings.
-   A raw, library-independent SPI register read of `IC_IDENTITY`
-   consistently decoded as a valid ST25R3916 ID (`0x2a` = type 0x28 +
-   revision 2) even while every one of those fixes still left RFAL's own
-   init reporting `ERR_HW_MISMATCH` on a `0x00` read, on every attempt,
-   through a clean rebuild - meaning the chip was genuinely alive and
-   answering, but something specific to RFAL's own init sequence (not
-   power, not bus contention, not pure timing) never got it to respond
-   the same way M5's own library does. Only M5's own stack, confirmed
-   working against identical hardware by direct side-by-side testing,
-   actually talks to the chip reliably - hence the migration, accepting
-   the extra dependency surface (M5Utility/M5HAL/M5UnitUnified transitively
-   pull in their own M5Unified version requirements, resolved alongside
-   M5Cardputer's) in exchange for a front-end that's proven to work here.
+   Cardputer-ADV unit it never got the chip to answer through RFAL's own
+   init, despite methodically matching M5's own official CapCC1101 driver
+   step for step: `POWER_EN` (G3) driven HIGH, the CC1101's CS (G5)
+   explicitly deselected so it can't contend on the shared SPI bus, the
+   same defensive `CMD_STOP` before `CMD_SET_DEFAULT` M5's bring-up
+   sends, the same 5×/20ms chip-ID retry loop, and the same SPI settings.
+   RFAL's own init consistently reported `ERR_HW_MISMATCH` reading
+   `IC_IDENTITY` (register `0x3F`) back as `0x00`.
+
+   This module was then migrated to M5's own official M5UnitUnified +
+   M5Unit-NFC stack - and on the *same* hardware, it *also* fails to
+   detect the chip (`Units.begin()` returns false; the serial log shows
+   `Not detected ST25R3916 03,06`, decoding to an invalid chip type/
+   revision), at both the library's own 10 MHz default and a dropped-down
+   1 MHz - identical result at both speeds, which rules out a
+   signal-integrity/clock-speed explanation. Across this whole
+   investigation, three completely different raw byte values came back
+   from reading the exact same `IC_IDENTITY` register - `0x00` (RFAL),
+   `0x2a` (a raw, library-independent manual SPI probe, decoding to a
+   *plausible*-looking ST25R3916 ID), and `0x1E` (M5's own library) -
+   each one consistent and repeatable for its own exact sequence of SPI
+   operations, but different from the others. The SPI command framing
+   itself was verified byte-identical across all three (`0x7F` to read
+   register `0x3F` - bit 6 set for a register read, the address in the
+   low 6 bits).
+
+   Getting a different-but-internally-consistent answer depending on
+   *which* code touches the chip, from two independent, best-practice
+   driver implementations that both correctly drive the shared Cap-Bus
+   SPI pins (confirmed by the CC1101 working perfectly over the very
+   same physical bus), points at a hardware fault specific to the
+   ST25R3916's own connection on this unit - most likely a bad/marginal
+   contact on its CS or IRQ line, or on the chip itself - rather than
+   anything fixable in software. If you hit the same symptom (a tag
+   reader that fails identically across driver rewrites, with
+   inconsistent raw register reads), a continuity check with a
+   multimeter between the Cap-Bus connector's G6/G4 pins and the
+   ST25R3916 package (if you're comfortable opening the module), or
+   simply trying a different physical Cap CC1101 unit, is a more
+   productive next step than further driver changes. WaveRogue keeps the
+   M5UnitUnified-based implementation (over reverting to RFAL) since it's
+   the officially maintained path and the better bet on hardware that
+   *is* making proper contact.
 
 ## Keyboard controls
 
