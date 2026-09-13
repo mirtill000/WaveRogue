@@ -503,7 +503,13 @@ bool SubGhzAudit::begin(Band band) {
     currentBand = band;
     subghzSPI.begin(SUBGHZ_SPI_SCK_PIN, SUBGHZ_SPI_MISO_PIN, SUBGHZ_SPI_MOSI_PIN, SUBGHZ_CS_PIN);
 
-    int rState = radio.begin(kBands[(int)band].startMhz, 4.8f, 48.0f, 135.0f, 10, 16);
+    // 270 kHz RX channel filter matches the CC1101's "AM270" bandwidth
+    // setting - the narrower of the two standard OOK presets Flipper Zero
+    // (and other common Sub-GHz tools) ship, and a safer default than a
+    // tighter filter: real remotes vary in oscillator drift/deviation, so
+    // a too-narrow filter (this used 135 kHz before) can attenuate or
+    // distort a genuine signal that a 270 kHz-wide filter passes cleanly.
+    int rState = radio.begin(kBands[(int)band].startMhz, 4.8f, 48.0f, 270.0f, 10, 16);
     if (rState != RADIOLIB_ERR_NONE) {
         UIManager::printLine("CC1101 init failed, code " + String(rState));
         return false;

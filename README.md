@@ -228,11 +228,13 @@ Every finding (capture, repeat, continuous carrier) is appended to
 detection thresholds, and history size via the `SUBGHZ_AUDIT_*` macros in
 `config.h`.
 
-**315 MHz caveat:** the Cap CC1101's antenna switch (`RF_SW0`) only
-exposes a 433 MHz path and an 868/915 MHz path in software (see
-`subghz_rf_switch.h`) — there's no dedicated matching path for 315 MHz on
-this hardware, so that preset tunes through the 433 MHz path instead, with
-reduced range/sensitivity as a result.
+**315 MHz caveat:** the Cap CC1101's antenna switch (`RF_SW0`) has only
+one fully-selectable path in software, shared by 433/868/915 MHz (see
+`subghz_rf_switch.h`) — completing a dedicated low-band match for 315 MHz
+needs `RF_SW1`, which isn't broken out on this hardware. 315 MHz still
+gets the closer of the two available options (`RF_SW0` low), just
+without a complete match, so expect reduced range/sensitivity there
+compared to the other three bands.
 
 **On sweep width vs. catching short transmissions:** all four presets are
 scoped to the sub-band actually used by simple fixed-frequency devices in

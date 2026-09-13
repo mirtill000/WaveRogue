@@ -73,13 +73,23 @@
 // broken out on the Cap-Bus header, so RADIOLIB_NC is passed for it in
 // code.
 //
-// RF_SW0 selects the antenna path per M5Stack's published truth table;
-// RF_SW1 isn't broken out here (fixed in hardware), so only two of the
-// three documented bands have a dedicated antenna-matching path:
-// RF_SW0=LOW -> 433MHz path, RF_SW0=HIGH -> 868/915MHz path. 315MHz
-// (which needs RF_SW1=LOW) has no such path - Sub-GHz Audit still tunes
-// there through the 433MHz path (see subghz_rf_switch.cpp), with
-// reduced range/sensitivity as a result.
+// RF_SW0 selects the antenna path; RF_SW1 isn't broken out here (fixed
+// in hardware). The threshold below was originally guessed at 700MHz
+// (an arbitrary split between 433 and 868) on the assumption that
+// RF_SW0=LOW meant "433MHz path" and HIGH meant "868/915MHz path".
+// Cross-checking Evil-M5Project's from-scratch CC1101 driver for this
+// exact same Cap CC1101 hardware (same CS/GDO0/RF_SW0 pin numbers,
+// independently confirming the wiring) shows its actual working
+// threshold is 350MHz, not 700MHz - i.e. RF_SW0=HIGH covers 433MHz
+// *and* 868/915MHz on one shared wideband path, and LOW is reserved for
+// genuinely sub-350MHz signals (315MHz's region) rather than being
+// "the 433MHz path". Using 700MHz here would silently route 433MHz
+// through the wrong antenna path (LOW, matched for well below 433MHz)
+// - likely degrading 433MHz range/sensitivity rather than just leaving
+// 315MHz without a dedicated match, which is the only gap this leaves:
+// 315MHz still has no complete path (RF_SW1=LOW, needed to fully commit
+// to the low-band match, isn't controllable from here), but LOW is at
+// least the closer of the two available options for it now.
 // -----------------------------------------------------------------------
 #define SUBGHZ_CS_PIN      5
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
@@ -87,9 +97,9 @@
 #define SUBGHZ_SPI_SCK_PIN  LORA_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
 #define SUBGHZ_SPI_MISO_PIN LORA_SPI_MISO_PIN  // (G39)
 #define SUBGHZ_SPI_MOSI_PIN LORA_SPI_MOSI_PIN  // (G14)
-// Frequencies at/above this are routed to the 868/915MHz antenna path;
-// below it, to the 433MHz path (see the RF Switch Control Truth Table).
-#define SUBGHZ_RF_SW_THRESHOLD_MHZ 700.0f
+// Frequencies at/above this are routed to the shared 433/868/915MHz
+// antenna path; below it, to the (incomplete, no RF_SW1) low-band path.
+#define SUBGHZ_RF_SW_THRESHOLD_MHZ 350.0f
 
 // -----------------------------------------------------------------------
 // NFC (ST25R3916) - the Cap CC1101 module doesn't just carry a CC1101:

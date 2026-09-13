@@ -31,10 +31,11 @@
 //
 // All findings are appended to an SD log (SUBGHZ_AUDIT_LOG_PATH).
 //
-// 315 MHz has no dedicated antenna-matching path on this hardware (the
-// Cap CC1101's RF switch only exposes the 433 vs. 868/915 selection -
-// see subghz_rf_switch.h) - it's tuned through the 433 MHz path instead,
-// so expect reduced range/sensitivity there compared to the other bands.
+// 315 MHz has no complete antenna-matching path on this hardware - the
+// low-band path it needs requires RF_SW1, which isn't controllable from
+// the Cap-Bus header (see subghz_rf_switch.h) - so expect reduced
+// range/sensitivity there compared to 433/868/915, which all share one
+// fully-selectable wideband path.
 //
 // The overall approach (sweep to find activity, classify continuous
 // carrier vs. burst, decode short/long PWM pulses, flag repeats) follows
