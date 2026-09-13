@@ -90,6 +90,26 @@
 #define SUBGHZ_RF_SW_THRESHOLD_MHZ 700.0f
 
 // -----------------------------------------------------------------------
+// NFC (ST25R3916) - the Cap CC1101 module doesn't just carry a CC1101:
+// it also has an ST25R3916 NFC/RFID front-end on the SAME Cap-Bus slot,
+// sharing the SAME SPI bus (SCK/MOSI/MISO) as the CC1101 above, on its
+// own CS/IRQ lines. NFC_CS/NFC_IRQ happen to numerically match
+// LORA_BUSY_PIN/LORA_DIO1_PIN - that's not a conflict: the LoRa and
+// CC1101 caps are physically mutually exclusive on the same Cap-Bus
+// connector, so whichever cap is actually plugged in "owns" those pins.
+// -----------------------------------------------------------------------
+#define NFC_CS_PIN       6    // ST25R3916 CS
+#define NFC_IRQ_PIN      4    // ST25R3916 IRQ
+#define NFC_SPI_SCK_PIN  SUBGHZ_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
+#define NFC_SPI_MISO_PIN SUBGHZ_SPI_MISO_PIN  // (G39)
+#define NFC_SPI_MOSI_PIN SUBGHZ_SPI_MOSI_PIN  // (G14)
+// How long (ms) each discovery cycle polls before restarting - keep short
+// so the module stays responsive to ESC while idle between tags.
+#define NFC_DISCOVER_DURATION_MS 1000
+// Where per-tag dumps are saved (one file per UID, re-scanning updates it).
+#define NFC_DUMP_DIR "/nfc"
+
+// -----------------------------------------------------------------------
 // GNSS (GPS) module - plain UART, e.g. on the Grove port (G1/G2).
 // -----------------------------------------------------------------------
 #define GPS_RX_PIN   13   // Cardputer RX  <-  GPS TX

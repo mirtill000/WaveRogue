@@ -21,11 +21,13 @@
 #include "subghz_bug_detector.h"
 #include "subghz_pocsag_scanner.h"
 #include "subghz_syncword_analyzer.h"
+#include "nfc_reader.h"
 
 namespace {
     const char* kTopMenuItems[] = {
         "LoRa Tools",
         "Sub-GHz Tools",
+        "NFC Tools",
     };
     constexpr int kTopMenuCount = sizeof(kTopMenuItems) / sizeof(kTopMenuItems[0]);
 
@@ -65,6 +67,14 @@ namespace {
     };
     constexpr int kSubghzMenuCount = sizeof(kSubghzMenuItems) / sizeof(kSubghzMenuItems[0]);
 
+    const char* kNfcMenuItems[] = {
+        "1. NFC Reader/Writer",
+    };
+    const AppState kNfcModuleStates[] = {
+        AppState::NFC_READER,
+    };
+    constexpr int kNfcMenuCount = sizeof(kNfcMenuItems) / sizeof(kNfcMenuItems[0]);
+
     AppState currentState = AppState::MENU_TOP;
 
     AppState parentMenuOf(AppState s) {
@@ -78,6 +88,8 @@ namespace {
             case AppState::LORA_PLAINTEXT_DETECT:
             case AppState::LORA_GWMP_SNIFF:
                 return AppState::MENU_LORA;
+            case AppState::NFC_READER:
+                return AppState::MENU_NFC;
             default:
                 return AppState::MENU_SUBGHZ;
         }
@@ -158,6 +170,11 @@ namespace {
                 UIManager::drawHeader("Sync-Word Analyzer");
                 SubGhzSyncwordAnalyzer::begin();
                 break;
+
+            case AppState::NFC_READER:
+                UIManager::drawHeader("NFC Reader/Writer");
+                NfcReader::begin();
+                break;
             default:
                 break;
         }
@@ -211,6 +228,10 @@ namespace {
             case AppState::SUBGHZ_SYNCWORD_ANALYZER:
                 SubGhzSyncwordAnalyzer::end();
                 break;
+
+            case AppState::NFC_READER:
+                NfcReader::end();
+                break;
             default:
                 break; // LORA_SNIFFER: nothing to tear down beyond leaving RX mode
         }
@@ -235,6 +256,8 @@ namespace {
             case AppState::SUBGHZ_BUG_DETECT:        SubGhzBugDetector::loop(); break;
             case AppState::SUBGHZ_POCSAG_SCAN:       SubGhzPocsagScanner::loop(); break;
             case AppState::SUBGHZ_SYNCWORD_ANALYZER: SubGhzSyncwordAnalyzer::loop(); break;
+
+            case AppState::NFC_READER:               NfcReader::loop(); break;
             default:
                 break;
         }
@@ -258,6 +281,9 @@ void loop() {
                 UIManager::resetMenu();
             } else if (sel == 1) {
                 currentState = AppState::MENU_SUBGHZ;
+                UIManager::resetMenu();
+            } else if (sel == 2) {
+                currentState = AppState::MENU_NFC;
                 UIManager::resetMenu();
             }
             break;
@@ -284,6 +310,19 @@ void loop() {
             int sel = UIManager::pollListMenu("Sub-GHz Tools", kSubghzMenuItems, kSubghzMenuCount);
             if (sel >= 0) {
                 currentState = kSubghzModuleStates[sel];
+                enterModule(currentState);
+            }
+            break;
+        }
+        case AppState::MENU_NFC: {
+            if (UIManager::isBack()) {
+                currentState = AppState::MENU_TOP;
+                UIManager::resetMenu();
+                break;
+            }
+            int sel = UIManager::pollListMenu("NFC Tools", kNfcMenuItems, kNfcMenuCount);
+            if (sel >= 0) {
+                currentState = kNfcModuleStates[sel];
                 enterModule(currentState);
             }
             break;

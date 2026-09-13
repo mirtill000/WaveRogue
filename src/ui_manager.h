@@ -17,6 +17,7 @@ enum class AppState {
     MENU_TOP = 0,
     MENU_LORA,
     MENU_SUBGHZ,
+    MENU_NFC,
 
     // ---- LoRa leaf modules ----
     LORA_SNIFFER,           // Module: LoRaWAN Sniffer & Meta-Analyzer
@@ -36,7 +37,10 @@ enum class AppState {
     SUBGHZ_WMBUS_SCAN,       // Module: Wireless M-Bus Smart Meter Scanner
     SUBGHZ_BUG_DETECT,       // Module: Analog Bug / Carrier Detector
     SUBGHZ_POCSAG_SCAN,      // Module: POCSAG/FLEX Pager Scanner
-    SUBGHZ_SYNCWORD_ANALYZER // Module: Preamble/Sync-Word Analyzer
+    SUBGHZ_SYNCWORD_ANALYZER, // Module: Preamble/Sync-Word Analyzer
+
+    // ---- NFC leaf modules ----
+    NFC_READER               // Module: NFC Reader/Writer + Mifare default-key auditor
 };
 
 // Keys used for navigation. The Cardputer keyboard has no dedicated arrow

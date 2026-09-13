@@ -1,19 +1,24 @@
 # WaveRogue
 
 RF security-auditing firmware for the **M5Stack Cardputer** (ESP32-S3),
-built with PlatformIO + Arduino. It provides 16 keyboard-navigable
-modules, organized into a **LoRa Tools** and a **Sub-GHz Tools** menu, for
-auditing LoRaWAN networks and simple sub-GHz (OOK/ASK/FSK) devices.
+built with PlatformIO + Arduino. It provides 17 keyboard-navigable
+modules, organized into **LoRa Tools**, **Sub-GHz Tools**, and **NFC
+Tools** menus, for auditing LoRaWAN networks, simple sub-GHz (OOK/ASK/FSK)
+devices, and NFC-A/MIFARE Classic badges.
 
 ## ⚠️ Legal & ethical use
 
 This firmware is for **authorized security auditing and education only**:
 networks and devices you own, or that you have explicit written permission
 to test (e.g. a pentest engagement, a CTF, or your own home-automation
-gear). It does not break encryption anywhere — every module either reads
-unencrypted protocol metadata, flags data that *looks* unencrypted via
-statistical heuristics (entropy), or works with raw RF/Wi-Fi timing you
-already have physical access to receive.
+gear). Almost every module stops short of breaking any encryption — it
+either reads unencrypted protocol metadata, flags data that *looks*
+unencrypted via statistical heuristics (entropy), or works with raw
+RF/Wi-Fi/NFC timing you already have physical access to receive. The one
+deliberate exception is **NFC Tools' MIFARE Classic default-key auditor**,
+which actively tries to authenticate against a card's sectors using a
+small dictionary of widely-published default/well-known keys - only run
+it against badges/cards you own or are authorized to assess.
 
 Radio transmission (the Sub-GHz Replay Tester, and optionally referenced
 but not implemented in the Rogue Gateway module) is regulated in most
@@ -29,7 +34,8 @@ are responsible for how you use this code.
 
 - M5Stack Cardputer (ESP32-S3, 240×135 TFT, built-in keyboard, microSD slot)
 - A LoRa transceiver: SX1262 or SX1276 module/breakout (via SPI)
-- A CC1101 sub-GHz transceiver module (via SPI)
+- A CC1101 sub-GHz transceiver module (via SPI) - M5Stack's Cap CC1101 also
+  carries an ST25R3916 NFC front-end on the same board, used by NFC Tools
 - A UART GNSS/GPS module (for the Wardriving module)
 
 `config.h`'s LoRa pin defaults (`LORA_CS_PIN`, `LORA_SPI_*`, etc.) match
@@ -77,6 +83,14 @@ If you're using a different Sub-GHz module/wiring, update the
 `SubGhzRfSwitch::selectForFrequency()` calls if your hardware has no such
 switch.
 
+That same Cap CC1101 board also carries the ST25R3916 NFC front-end used
+by **NFC Tools**, on its own CS/IRQ (`NFC_CS_PIN`/`NFC_IRQ_PIN` in
+`config.h`) but the same shared Cap-Bus SPI bus. Those pins happen to
+numerically match `LORA_BUSY_PIN`/`LORA_DIO1_PIN` - not a conflict, for
+the same reason as above: only one cap is ever physically plugged in at
+a time, so it "owns" those pins regardless of which module's macro name
+you look at.
+
 All pin assignments and RF parameters live in **`src/config.h`** — edit
 that one file to match your actual wiring (Grove port, internal header, or
 a HAT/Unit) and your region/target frequencies. Nothing else in the
@@ -110,6 +124,8 @@ src/
   subghz_bug_detector.*          Analog bug / continuous-carrier detector
   subghz_pocsag_scanner.*        POCSAG pager scanner
   subghz_syncword_analyzer.*     Preamble/sync-word fingerprinting
+
+  nfc_reader.*                   NFC-A reader/writer + MIFARE Classic default-key auditor
 ```
 
 ## LoRa Tools
@@ -218,6 +234,51 @@ src/
    table (e.g. the CC1101's own factory-default sync word) to help
    classify unknown hardware by vendor. Extend the table in
    `subghz_syncword_analyzer.cpp` with your own findings.
+
+## NFC Tools
+
+1. **NFC Reader/Writer** — polls for NFC-A tags/badges and reports
+   UID/ATQA/SAK. If the SAK matches a MIFARE Classic variant (Mini/1K/4K),
+   it automatically sweeps every sector against a small dictionary of
+   widely-published default/well-known keys (Key A and Key B alike) - the
+   same kind of seed dictionary shipped by common open-source MIFARE
+   auditing tools (mfoc, libnfc's `nfc-mfclassic`). Any cracked sector is
+   read and appended to a per-UID dump file on the SD card
+   (`/nfc/<UID>.txt`, rewritten fresh on every re-scan of the same tag),
+   and the module runs a one-time **write-access self-test** on the first
+   ordinary data block it can reach - it writes the block's own bytes back
+   unchanged and reads them again to confirm the write path genuinely
+   works, without ever changing what's stored on the tag. A tag that
+   isn't a recognized MIFARE Classic SAK is still logged (UID/ATQA/SAK
+   only) - this is a generic NFC-A reader first, a MIFARE Classic auditor
+   second.
+
+   Setup: this module needs the ST25R3916 NFC front-end that ships on the
+   **same Cap CC1101 module** as the CC1101 (same Cap-Bus slot/SPI bus,
+   separate CS/IRQ - `NFC_CS_PIN`/`NFC_IRQ_PIN` in `config.h`). It's built
+   on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
+   (`rfal_nfc.h`/`rfal_mf1.h`) rather than a from-scratch ISO14443A/
+   Crypto1 implementation:
+
+   ```
+   git clone https://github.com/wilson-elechouse/ST25R3916 /tmp/st25r3916-lib
+   mkdir -p lib
+   cp -r /tmp/st25r3916-lib/NFC-RFAL lib/
+   cp -r /tmp/st25r3916-lib/ST25R3916_ELECHOUSE lib/
+   ```
+
+   That repo holds two separate library folders at its root, which a
+   single `lib_deps` git URL isn't guaranteed to resolve into two usable
+   libraries - copying both into this project's own `lib/` directory (as
+   above) is the reliable path, since PlatformIO always scans a project's
+   local `lib/` folder. A **known, bounded limitation of this first
+   version**: a full sweep of a locked 4K card (40 sectors × 2 key types ×
+   the dictionary in `nfc_reader.cpp`) can take on the order of tens of
+   seconds and isn't interruptible mid-sweep - the status bar keeps
+   updating per sector so it's clear the device hasn't frozen. The
+   dictionary itself is intentionally small and clearly labeled as
+   non-exhaustive: a sector that resists every key in it is *not* proven
+   secure, only not trivially default-keyed.
 
 ## Keyboard controls
 
