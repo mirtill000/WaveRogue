@@ -12,26 +12,35 @@ namespace {
     CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
     // Band edges. These are standard ISM/SRD allocation boundaries, not
-    // anyone's expression. 433 MHz is scoped to the actual EU SRD860
-    // sub-band (433.05-434.79 MHz, ~18 channels at SUBGHZ_AUDIT_STEP_MHZ)
-    // rather than a broad spectrum-analyzer-style sweep range: a full
-    // sweep at SUBGHZ_AUDIT_DWELL_MS per channel needs to complete fast
-    // enough that a real device's short transmission (a Flipper Zero
-    // manual send, a garage remote press, ~1s or less) has a realistic
-    // chance of landing inside a dwell window - a 20 MHz-wide sweep like
-    // the other three bands still use takes ~40s per pass, so the CC1101
-    // is tuned elsewhere for the overwhelming majority of the time a
-    // short burst could occur.
+    // anyone's expression - each scoped to the sub-band actually used by
+    // simple fixed-frequency devices in that range, rather than a broad
+    // spectrum-analyzer-style sweep across the whole regulatory
+    // allocation. This matters for dwell timing: a full sweep at
+    // SUBGHZ_AUDIT_DWELL_MS per channel needs to complete fast enough
+    // that a real device's short transmission (a Flipper Zero manual
+    // send, a garage remote press, ~1s or less) has a realistic chance of
+    // landing inside a dwell window - a 15-20 MHz-wide sweep takes on the
+    // order of 30-40s per pass, so the CC1101 would be tuned elsewhere
+    // for the overwhelming majority of the time a short burst could
+    // occur. At SUBGHZ_AUDIT_STEP_MHZ (0.1 MHz) these ranges give:
+    //   315 MHz: 314.0-316.0 MHz (US ISM remote/sensor cluster) - 21 ch
+    //   433 MHz: 433.05-434.79 MHz (EU SRD860 generic sub-band) - 18 ch
+    //   868 MHz: 868.0-868.6 MHz (EU SRD860 generic sub-band) - 7 ch
+    //   915 MHz: 914.0-916.0 MHz (US ISM remote/sensor cluster) - 21 ch
+    // A device sitting well outside these narrower windows (e.g. 868.95
+    // MHz Wireless M-Bus, or a 915 MHz device deliberately frequency-
+    // hopping across the full 902-928 MHz US ISM band) won't be swept -
+    // widen the relevant entry below if that's what you're auditing.
     struct BandDef {
         const char* label;
         float startMhz;
         float endMhz;
     };
     constexpr BandDef kBands[] = {
-        {"315 MHz", 310.0f, 320.0f},
+        {"315 MHz", 314.0f, 316.0f},
         {"433 MHz", 433.05f, 434.79f},
-        {"868 MHz", 860.0f, 875.0f},
-        {"915 MHz", 905.0f, 925.0f},
+        {"868 MHz", 868.0f, 868.6f},
+        {"915 MHz", 914.0f, 916.0f},
     };
     constexpr int kBandCount = sizeof(kBands) / sizeof(kBands[0]);
     static_assert(kBandCount == (int)SubGhzAudit::Band::COUNT, "kBands must match SubGhzAudit::Band");

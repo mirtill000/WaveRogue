@@ -234,19 +234,33 @@ exposes a 433 MHz path and an 868/915 MHz path in software (see
 this hardware, so that preset tunes through the 433 MHz path instead, with
 reduced range/sensitivity as a result.
 
-**On sweep width vs. catching short transmissions:** the 433 MHz preset
-is scoped to the actual EU SRD860 sub-band (433.05–434.79 MHz, ~18
-channels) rather than a wide spectrum-analyzer-style range, specifically
-so a full sweep completes in a few seconds. A short manual transmission
-(a Flipper Zero "Send", a garage remote press - often under a second)
-has to land inside the CC1101's dwell window on the right channel to be
-caught at all; at the default `SUBGHZ_AUDIT_DWELL_MS`/`SUBGHZ_AUDIT_STEP_MHZ`,
-a 20 MHz-wide sweep (like the 315/868/915 presets still use) takes on the
-order of 40 seconds per pass, so a one-off short burst is likely to be
-missed even though reception itself works fine. Hold/repeat the
+**On sweep width vs. catching short transmissions:** all four presets are
+scoped to the sub-band actually used by simple fixed-frequency devices in
+that range, rather than a wide spectrum-analyzer-style sweep across the
+whole regulatory allocation - specifically so a full sweep completes in a
+few seconds instead of tens of seconds:
+
+| Preset | Range | Channels |
+|--------|-------|----------|
+| 315 MHz | 314.0–316.0 MHz | ~21 |
+| 433 MHz | 433.05–434.79 MHz | ~18 |
+| 868 MHz | 868.0–868.6 MHz | ~7 |
+| 915 MHz | 914.0–916.0 MHz | ~21 |
+
+A short manual transmission (a Flipper Zero "Send", a garage remote
+press - often under a second) has to land inside the CC1101's dwell
+window on the right channel to be caught at all; at the default
+`SUBGHZ_AUDIT_DWELL_MS`/`SUBGHZ_AUDIT_STEP_MHZ`, a 15-20 MHz-wide sweep
+(what these presets used before being scoped down) takes on the order of
+30-40 seconds per pass, so a one-off short burst is likely to be missed
+even though reception itself works fine. The tradeoff is coverage: a
+device sitting well outside these narrower windows (e.g. 868.95 MHz
+Wireless M-Bus, or a 915 MHz device frequency-hopping across the full
+902-928 MHz US ISM band) won't be swept at all. Hold/repeat a
 transmission for the width of a full sweep pass if a single send isn't
-being picked up, or narrow a preset's range in `subghz_audit.cpp`'s
-`kBands[]` the same way 433 MHz was scoped down.
+being picked up, or widen the relevant entry in `subghz_audit.cpp`'s
+`kBands[]` if you're specifically auditing a device outside these
+ranges.
 
 The overall sweep/lock/decode/repeat-detect approach - including
 decoding every repeat of a captured frame independently and
