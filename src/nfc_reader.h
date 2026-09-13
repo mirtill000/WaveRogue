@@ -11,7 +11,7 @@
 // Flow, on every tag presented:
 //   1. Poll for an NFC-A tag; report UID/ATQA/SAK/type.
 //   2. If it's a recognized MIFARE Classic variant (Mini/1K/4K), sweep
-//      every sector against a 50-key built-in dictionary of widely-
+//      every sector against a 188-key built-in dictionary of widely-
 //      published default/well-known/pattern keys (Key A and Key B) -
 //      the same kind of seed dictionary shipped by common open-source
 //      MIFARE auditing tools (e.g. mfoc, libnfc's nfc-mfclassic) - plus

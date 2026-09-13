@@ -258,7 +258,7 @@ src/
 
 1. **NFC Reader/Writer** — polls for NFC-A tags/badges and reports
    UID/ATQA/SAK. If the SAK matches a MIFARE Classic variant (Mini/1K/4K),
-   it automatically sweeps every sector against a **50-key built-in
+   it automatically sweeps every sector against a **188-key built-in
    dictionary** of widely-published default/well-known/pattern keys (Key A
    and Key B alike) - the same kind of seed dictionary shipped by common
    open-source MIFARE auditing tools (mfoc, libnfc's `nfc-mfclassic`) -
@@ -292,13 +292,13 @@ src/
    step needed.
 
    A **known, bounded limitation of this first version**: a full sweep of
-   a locked 4K card (40 sectors × 2 key types × the built-in 50-key
+   a locked 4K card (40 sectors × 2 key types × the built-in 188-key
    dictionary, plus any SD wordlist) isn't interruptible mid-sweep and
-   can run well past a minute the larger the wordlist gets - the status
-   bar keeps updating per sector so it's clear the device hasn't frozen.
-   Even a 50-key dictionary plus a large wordlist is still not
-   exhaustive: a sector that resists every key tried is *not* proven
-   secure, only not trivially default-keyed.
+   can run several minutes, longer still the larger the wordlist gets -
+   the status bar keeps updating per sector so it's clear the device
+   hasn't frozen. Even a 188-key dictionary plus a large wordlist is
+   still not exhaustive: a sector that resists every key tried is *not*
+   proven secure, only not trivially default-keyed.
 
    **Two hardware quirks this module works around**, both worth knowing
    if you're porting it to different Cap CC1101 wiring:
