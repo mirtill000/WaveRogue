@@ -22,7 +22,14 @@
 //      reactivates the tag (HLTA + WUPA + re-select) before the next
 //      try - a real MIFARE Classic tag needs that fresh select cycle
 //      after a rejected auth or every attempt after the first wrong
-//      guess silently keeps failing, even ones with the right key.
+//      guess silently keeps failing, even ones with the right key. That
+//      recovery cycle makes each wrong guess relatively expensive, so
+//      whichever (key, key-type) pairs already cracked a sector this
+//      sweep are tried first on every later sector before falling back
+//      to the full dictionary - real cards overwhelmingly reuse the
+//      same handful of keys across sectors, so this turns the common
+//      case into one attempt per sector instead of a full dictionary
+//      scan, without skipping any key on an actual miss.
 //   3. For each cracked sector, reads its data blocks and appends them to
 //      a per-UID dump file on the SD card (/nfc/<UID>.txt) - the
 //      "reader" half.

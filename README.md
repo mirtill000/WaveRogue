@@ -280,14 +280,29 @@ bit-count family label, not a maintained per-protocol table).
    and downloads all four automatically, no vendoring or manual install
    step needed.
 
+   Every failed key attempt costs a full tag reactivation (HLTA + WUPA +
+   re-select) - a real MIFARE Classic tag needs that fresh select cycle
+   before it will accept another Auth attempt at all, so this is what
+   makes each wrong guess relatively expensive. To keep that cost from
+   compounding across a whole card, whichever (key, key-type) pairs
+   already cracked a sector this sweep are tried first on every later
+   sector, before falling back to the full dictionary + wordlist - real
+   cards overwhelmingly reuse the same handful of keys (often just one)
+   across sectors, so this turns the common case into one attempt per
+   sector instead of a full dictionary scan every time. An SD wordlist is
+   also deduplicated against the built-in dictionary (and against itself)
+   at load time, so a public keys-list file's overlap with the built-in
+   188 keys isn't tried twice.
+
    A **known, bounded limitation of this first version**: a full sweep of
    a locked 4K card (40 sectors × 2 key types × the built-in 188-key
-   dictionary, plus any SD wordlist) isn't interruptible mid-sweep and
-   can run several minutes, longer still the larger the wordlist gets -
-   the status bar keeps updating per sector so it's clear the device
-   hasn't frozen. Even a 188-key dictionary plus a large wordlist is
-   still not exhaustive: a sector that resists every key tried is *not*
-   proven secure, only not trivially default-keyed.
+   dictionary, plus any SD wordlist) still isn't interruptible mid-sweep
+   and can run several minutes in the worst case (every sector genuinely
+   using a distinct, never-before-seen key) - the status bar keeps
+   updating per sector so it's clear the device hasn't frozen. Even a
+   188-key dictionary plus a large wordlist is still not exhaustive: a
+   sector that resists every key tried is *not* proven secure, only not
+   trivially default-keyed.
 
    **Two hardware quirks this module works around**, both worth knowing
    if you're porting it to different Cap CC1101 wiring:

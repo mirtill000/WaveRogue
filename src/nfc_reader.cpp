@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <vector>
 #include <array>
+#include <algorithm>
 
 // M5Unified.h must come first: wiring/m5_unit_unified_wiring.hpp calls
 // M5.getBoard()/M5.getPin() but doesn't include M5Unified.h itself - it
@@ -246,6 +247,13 @@ namespace {
     };
     constexpr size_t kNumDefaultKeys = sizeof(kDefaultKeys) / sizeof(kDefaultKeys[0]);
 
+    bool matchesDefaultKey(const uint8_t key[6]) {
+        for (size_t i = 0; i < kNumDefaultKeys; i++) {
+            if (memcmp(kDefaultKeys[i].key, key, 6) == 0) return true;
+        }
+        return false;
+    }
+
     // Extra keys loaded from an optional SD wordlist (see
     // loadWordlistFromSd() below) - tried after the built-in dictionary,
     // for every sector, on top of it.
@@ -279,6 +287,46 @@ namespace {
         if (authenticate(trailer, key, useKeyB)) return true;
         if (!nfc_a.reactivate(picc)) tagLost = true;
         return false;
+    }
+
+    // Most real-world cards reuse a small handful of distinct keys (often
+    // just one) across every sector rather than a unique key per sector.
+    // Since a failed guess now costs a full reactivate-and-recover round
+    // trip (see tryKeyAndRecover() above), exhausting the ~200-entry
+    // dictionary sector after sector is the dominant cost of a sweep on
+    // such a card. Remembering which (key, key-type) pairs already
+    // succeeded THIS sweep and trying those first on every new sector
+    // turns the common case into one attempt per sector instead of a full
+    // dictionary scan, without skipping any key: a cache miss still falls
+    // through to the complete dictionary + wordlist scan below.
+    struct SuccessKey {
+        uint8_t key[6];
+        bool useKeyB;
+    };
+    constexpr size_t kSuccessCacheSize = 6;
+    SuccessKey successCache[kSuccessCacheSize];
+    size_t successCacheCount = 0;
+
+    void rememberSuccessKey(const uint8_t* keyIn, bool useKeyB) {
+        // Copy out first: `keyIn` may itself point into successCache[]
+        // (a cache-hit re-remembers the entry it just matched against) -
+        // mutating the array below before reading keyIn would otherwise
+        // read back already-shifted, wrong bytes.
+        uint8_t key[6];
+        memcpy(key, keyIn, 6);
+
+        size_t existing = successCacheCount;
+        for (size_t i = 0; i < successCacheCount; i++) {
+            if (successCache[i].useKeyB == useKeyB && memcmp(successCache[i].key, key, 6) == 0) {
+                existing = i;
+                break;
+            }
+        }
+        size_t moveDown = min(existing, kSuccessCacheSize - 1);
+        for (size_t j = moveDown; j > 0; j--) successCache[j] = successCache[j - 1];
+        memcpy(successCache[0].key, key, 6);
+        successCache[0].useKeyB = useKeyB;
+        if (successCacheCount <= moveDown) successCacheCount = moveDown + 1;
     }
 
     void logSdLine(File& f, const String& line) {
@@ -318,7 +366,11 @@ namespace {
     // Loads extra keys from NFC_WORDLIST_PATH on the SD card, if present,
     // into wordlistKeys - one call per boot, right after SD.begin()
     // succeeds. A missing file is not an error; it's the expected case
-    // when someone hasn't dropped one on the card.
+    // when someone hasn't dropped one on the card. Keys already covered by
+    // the built-in dictionary (or repeated within the wordlist itself,
+    // which public key-list files often are) are skipped at load time
+    // rather than re-tried against every sector - each duplicate costs a
+    // full over-the-air auth-and-recover round-trip for nothing.
     void loadWordlistFromSd() {
         wordlistKeys.clear();
         if (!sdReady || !SD.exists(NFC_WORDLIST_PATH)) return;
@@ -326,18 +378,26 @@ namespace {
         File f = SD.open(NFC_WORDLIST_PATH);
         if (!f) return;
 
+        int skippedDuplicates = 0;
         while (f.available() && wordlistKeys.size() < NFC_WORDLIST_MAX_KEYS) {
             String line = f.readStringUntil('\n');
             uint8_t key[6];
-            if (parseHexKey(line, key)) {
-                std::array<uint8_t, 6> k;
-                memcpy(k.data(), key, 6);
-                wordlistKeys.push_back(k);
+            if (!parseHexKey(line, key)) continue;
+            if (matchesDefaultKey(key) ||
+                std::any_of(wordlistKeys.begin(), wordlistKeys.end(),
+                            [&](const std::array<uint8_t, 6>& k) { return memcmp(k.data(), key, 6) == 0; })) {
+                skippedDuplicates++;
+                continue;
             }
+            std::array<uint8_t, 6> k;
+            memcpy(k.data(), key, 6);
+            wordlistKeys.push_back(k);
         }
         f.close();
 
-        UIManager::printLine(String(wordlistKeys.size()) + " keys loaded from " + NFC_WORDLIST_PATH);
+        String msg = String(wordlistKeys.size()) + " keys loaded from " + NFC_WORDLIST_PATH;
+        if (skippedDuplicates > 0) msg += " (" + String(skippedDuplicates) + " duplicates skipped)";
+        UIManager::printLine(msg);
     }
 
     // Called once a sector's trailer has been authenticated with
@@ -393,6 +453,7 @@ namespace {
         int cracked = 0;
         bool wroteWriteTest = false;
         bool tagLost = false;
+        successCacheCount = 0; // this card's likely keys, not the previous card's
 
         // NOTE: a full sweep runs to completion inside this one
         // NfcReader::loop() call, unlike every other module's loop(),
@@ -410,6 +471,21 @@ namespace {
             uint8_t trailer = (uint8_t)get_sector_trailer_block_from_sector((uint16_t)s);
             bool sectorCracked = false;
 
+            // Keys that already worked elsewhere on this same card first -
+            // see rememberSuccessKey() above. Cheap on a miss (a handful
+            // of extra attempts at most), and turns the common "one key
+            // for the whole card" case into a single attempt per sector.
+            for (size_t c = 0; c < successCacheCount && !sectorCracked && !tagLost; c++) {
+                if (!tryKeyAndRecover(picc, trailer, toKey(successCache[c].key), successCache[c].useKeyB, tagLost)) {
+                    continue;
+                }
+                sectorCracked = true;
+                cracked++;
+                reportCracked(s, trailer, successCache[c].useKeyB ? "B" : "A", successCache[c].key,
+                              "recently-successful key", f, wroteWriteTest);
+                rememberSuccessKey(successCache[c].key, successCache[c].useKeyB);
+            }
+
             for (int kt = 0; kt < 2 && !sectorCracked && !tagLost; kt++) {
                 bool useKeyB = (kt == 1);
                 const char* ktName = useKeyB ? "B" : "A";
@@ -419,12 +495,14 @@ namespace {
                     sectorCracked = true;
                     cracked++;
                     reportCracked(s, trailer, ktName, kDefaultKeys[k].key, kDefaultKeys[k].label, f, wroteWriteTest);
+                    rememberSuccessKey(kDefaultKeys[k].key, useKeyB);
                 }
                 for (size_t k = 0; k < wordlistKeys.size() && !sectorCracked && !tagLost; k++) {
                     if (!tryKeyAndRecover(picc, trailer, toKey(wordlistKeys[k].data()), useKeyB, tagLost)) continue;
                     sectorCracked = true;
                     cracked++;
                     reportCracked(s, trailer, ktName, wordlistKeys[k].data(), "SD wordlist", f, wroteWriteTest);
+                    rememberSuccessKey(wordlistKeys[k].data(), useKeyB);
                 }
             }
 
