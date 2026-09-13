@@ -79,15 +79,15 @@
 // path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
 // is NOT selectable on this module - see subghz_rf_switch.cpp.
 // -----------------------------------------------------------------------
-// Reverted a CS=6 experiment (prompted by the Cap CC1101's own printed
-// label reading CC_CS=G6/NFC_CS=G5, opposite to what's used here and to
-// what M5's own M5UnitUnified source hardcodes internally): CS=6 gave
-// the same "CC1101 init failed, code -2" as CS=5 - inconclusive, since
-// the user reports CC1101 wasn't confirmed working at CS=5 either right
-// now, undermining the assumption the experiment was built on. Back to
-// 5 (the long-standing value) until CC1101 itself is re-diagnosed from
-// scratch, independent of the NFC investigation.
-#define SUBGHZ_CS_PIN      5
+// The "CS=5, confirmed working" assumption behind the earlier swap
+// experiment turned out to be unfounded - CC1101 was never actually
+// deeply verified (only "no Cap recognition error" early on, not a
+// checked RadioLib chip-version result), and CS=5 currently fails with
+// the exact same "CC1101 init failed, code -2" this project hit at the
+// very start. That reopens the Cap CC1101's own printed silkscreen
+// label (CC_CS=G6, NFC_CS=G5) as the more credible source - trying 6
+// for real now, not just as a throwaway diagnostic.
+#define SUBGHZ_CS_PIN      6
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
 #define SUBGHZ_RF_SW0_PIN  13   // CC1101_RF_SW0 - antenna band select (see subghz_rf_switch.h)
 #define SUBGHZ_SPI_SCK_PIN  LORA_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
