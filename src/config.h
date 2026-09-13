@@ -29,25 +29,52 @@
 // #define WAVEROGUE_LORA_SX1276 1
 
 // -----------------------------------------------------------------------
-// LoRa module pins (SPI shared with the Cardputer's default HSPI/FSPI bus).
-// SX1262 needs BUSY; SX1276 needs DIO1 as a second IRQ line for some
-// features but works fine with just DIO0 for RX-done. Adjust to your
-// wiring (e.g. a M5Stack LoRa868 Unit / Ra-01/Ra-02 breakout on Grove+GPIO).
+// LoRa module pins - matches M5Stack's official "Cap LoRa-1262" Cardputer
+// Cap-Bus add-on (SX1262). IMPORTANT: this module does NOT share the
+// Cardputer's internal display SPI bus - it brings out its own dedicated
+// SCK/MISO/MOSI on the Cap-Bus header, which is why LORA_SPI_* below gets
+// its own SPIClass instance in lora_auditor.cpp/lora_beacon_scanner.cpp
+// rather than reusing the global `SPI` object. Using the wrong bus here
+// is the classic cause of RadioLib's begin() returning -2
+// (RADIOLIB_ERR_CHIP_NOT_FOUND) - the SPI transactions just never reach
+// the chip. If you're using a different LoRa breakout wired by hand,
+// update all of these (and WAVEROGUE_LORA_SX1262 above) to match.
 // -----------------------------------------------------------------------
-#define LORA_CS_PIN     1     // NSS / CS
-#define LORA_RST_PIN    2     // RESET
-#define LORA_DIO0_PIN   3     // SX1276: DIO0 (RxDone/TxDone) | SX1262: IRQ
-#define LORA_BUSY_PIN   4     // SX1262 only: BUSY line (tie unused on SX1276 builds)
-#define LORA_DIO1_PIN   5     // SX1262: DIO1 (optional 2nd IRQ) | SX1276: DIO1 (unused here)
+#define LORA_CS_PIN       5     // NSS / CS
+#define LORA_RST_PIN      3     // RESET
+#define LORA_DIO0_PIN     3     // SX1276 only (unused on this SX1262 module)
+#define LORA_BUSY_PIN     6     // SX1262 BUSY line
+#define LORA_DIO1_PIN     4     // SX1262 IRQ (DIO1) | SX1276: DIO1 (unused here)
+#define LORA_SPI_SCK_PIN  40
+#define LORA_SPI_MISO_PIN 39
+#define LORA_SPI_MOSI_PIN 14
+
+// -----------------------------------------------------------------------
+// Cap LoRa-1262's RF antenna switch (FM8625H) is gated by P0 of an
+// on-board PI4IOE5V6408 I2C GPIO expander, shared on the Cardputer's
+// normal internal I2C bus (SDA=G8/SCL=G9 - the same `Wire` instance
+// M5Cardputer.begin() already initializes, so we don't re-init it here).
+// M5Stack's docs are explicit that P0 must be driven HIGH before the
+// radio will actually RX/TX - LoraAuditor::begin() does this. Set to 0
+// if your LoRa module/wiring has no such switch (e.g. a plain SX1262
+// breakout wired directly, with no expander in the path).
+// -----------------------------------------------------------------------
+#define WAVEROGUE_LORA_HAS_ANT_SWITCH 1
+#define LORA_ANT_SWITCH_I2C_ADDR 0x43   // PI4IOE5V6408 default address - verify with an I2C scan if RX/TX still fails
+#define LORA_ANT_SWITCH_PIN_MASK 0x01   // P0
 
 // -----------------------------------------------------------------------
 // Sub-GHz (CC1101) module pins - separate SPI CS, shares SCK/MOSI/MISO.
 // GDO0 is used both as the RX "data available" interrupt pin (OOK/ASK raw
 // pulse capture) and, in TX mode, as the bit-banged output pin for replay.
+// NOTE: these are still PLACEHOLDERS - the Cap-Bus pinout that fixed the
+// LoRa pins above only documents the "Cap LoRa-1262" module, which has no
+// CC1101. Update these to match whatever sub-GHz module/wiring you have;
+// just make sure they don't collide with the LoRa/GPS/SD/I2C pins above.
 // -----------------------------------------------------------------------
-#define SUBGHZ_CS_PIN     6
-#define SUBGHZ_GDO0_PIN   7
-#define SUBGHZ_GDO2_PIN   8   // optional, not required for basic OOK RX/TX
+#define SUBGHZ_CS_PIN     1
+#define SUBGHZ_GDO0_PIN   2
+#define SUBGHZ_GDO2_PIN   7   // optional, not required for basic OOK RX/TX
 
 // -----------------------------------------------------------------------
 // GNSS (GPS) module - plain UART, e.g. on the Grove port (G1/G2).

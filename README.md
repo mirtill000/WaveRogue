@@ -32,6 +32,29 @@ are responsible for how you use this code.
 - A CC1101 sub-GHz transceiver module (via SPI)
 - A UART GNSS/GPS module (for the Wardriving module)
 
+`config.h`'s LoRa pin defaults (`LORA_CS_PIN`, `LORA_SPI_*`, etc.) match
+M5Stack's official **Cap LoRa-1262** Cardputer Cap-Bus add-on out of the
+box. Two things about that module are easy to miss and will otherwise
+produce RadioLib's `begin()` returning `-2`
+(`RADIOLIB_ERR_CHIP_NOT_FOUND`) or a radio that inits but never
+receives anything:
+
+1. It brings its own dedicated SCK/MISO/MOSI on the Cap-Bus header,
+   separate from the Cardputer's internal display SPI bus - `lora_auditor.cpp`
+   and `lora_beacon_scanner.cpp` each open a second `SPIClass(HSPI)` on
+   `LORA_SPI_SCK_PIN`/`LORA_SPI_MISO_PIN`/`LORA_SPI_MOSI_PIN` for this
+   reason rather than using the default global `SPI`.
+2. Its RF antenna switch is gated by P0 of an on-board PI4IOE5V6408 I2C
+   GPIO expander, which must be driven high before RX/TX works -
+   `lora_antenna_switch.*` does this over the Cardputer's existing
+   internal I2C bus (set `WAVEROGUE_LORA_HAS_ANT_SWITCH` to 0 in
+   `config.h` if your LoRa hardware has no such expander).
+
+If you're using different LoRa hardware (a bare SX1262/SX1276 breakout,
+wired by hand, sharing the main SPI bus, no antenna-switch expander),
+update the pins in `config.h` accordingly and set
+`WAVEROGUE_LORA_HAS_ANT_SWITCH` to 0.
+
 All pin assignments and RF parameters live in **`src/config.h`** — edit
 that one file to match your actual wiring (Grove port, internal header, or
 a HAT/Unit) and your region/target frequencies. Nothing else in the

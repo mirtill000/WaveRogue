@@ -3,16 +3,24 @@
 #include "ui_manager.h"
 #include "gps_logger.h"
 #include "lora_inventory.h"
+#include "lora_antenna_switch.h"
 #include <RadioLib.h>
 #include <SD.h>
 #include <SPI.h>
 
 namespace {
 
+    // The Cap-Bus LoRa module brings its own dedicated SCK/MISO/MOSI, NOT
+    // the Cardputer's internal display SPI bus - using the default global
+    // `SPI` object here (implicitly on the wrong pins) is why begin()
+    // used to fail with RADIOLIB_ERR_CHIP_NOT_FOUND (-2). HSPI picks a
+    // different SPI peripheral than the one M5GFX already uses.
+    SPIClass loraSPI(HSPI);
+
 #if defined(WAVEROGUE_LORA_SX1262)
-    SX1262 radio = new Module(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RST_PIN, LORA_BUSY_PIN);
+    SX1262 radio = new Module(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RST_PIN, LORA_BUSY_PIN, loraSPI);
 #else
-    SX1276 radio = new Module(LORA_CS_PIN, LORA_DIO0_PIN, LORA_RST_PIN, LORA_DIO1_PIN);
+    SX1276 radio = new Module(LORA_CS_PIN, LORA_DIO0_PIN, LORA_RST_PIN, LORA_DIO1_PIN, loraSPI);
 #endif
 
     constexpr size_t kMaxFrameLen = 255;
@@ -160,6 +168,9 @@ namespace {
 } // namespace
 
 bool LoraAuditor::begin() {
+    loraSPI.begin(LORA_SPI_SCK_PIN, LORA_SPI_MISO_PIN, LORA_SPI_MOSI_PIN, LORA_CS_PIN);
+    LoraAntennaSwitch::enable();
+
     int state;
 #if defined(WAVEROGUE_LORA_SX1262)
     state = radio.begin(LORA_FREQ_MHZ, LORA_BANDWIDTH_KHZ, LORA_SPREADING_FACTOR,

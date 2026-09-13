@@ -1,16 +1,21 @@
 #include "lora_beacon_scanner.h"
 #include "config.h"
 #include "ui_manager.h"
+#include "lora_antenna_switch.h"
 #include <RadioLib.h>
+#include <SPI.h>
 
 namespace {
     // Own radio handle (same physical chip/pins as lora_auditor.cpp's, but
     // only one module is ever active at a time so a second RadioLib driver
-    // instance targeting the same SPI/CS is safe here).
+    // instance targeting the same SPI/CS is safe here). Needs its own
+    // dedicated SPIClass too - see the comment in lora_auditor.cpp.
+    SPIClass beaconSPI(HSPI);
+
 #if defined(WAVEROGUE_LORA_SX1262)
-    SX1262 beaconRadio = new Module(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RST_PIN, LORA_BUSY_PIN);
+    SX1262 beaconRadio = new Module(LORA_CS_PIN, LORA_DIO1_PIN, LORA_RST_PIN, LORA_BUSY_PIN, beaconSPI);
 #else
-    SX1276 beaconRadio = new Module(LORA_CS_PIN, LORA_DIO0_PIN, LORA_RST_PIN, LORA_DIO1_PIN);
+    SX1276 beaconRadio = new Module(LORA_CS_PIN, LORA_DIO0_PIN, LORA_RST_PIN, LORA_DIO1_PIN, beaconSPI);
 #endif
 
     constexpr size_t kMaxBeaconLen = 32;
@@ -30,6 +35,9 @@ namespace {
 }
 
 bool LoraBeaconScanner::begin() {
+    beaconSPI.begin(LORA_SPI_SCK_PIN, LORA_SPI_MISO_PIN, LORA_SPI_MOSI_PIN, LORA_CS_PIN);
+    LoraAntennaSwitch::enable();
+
     int state = beaconRadio.begin(LORA_BEACON_FREQ_MHZ, LORA_BEACON_BW_KHZ, LORA_BEACON_SF,
                                    LORA_CODING_RATE, LORA_SYNC_WORD, LORA_TX_POWER_DBM);
     if (state != RADIOLIB_ERR_NONE) {
