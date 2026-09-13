@@ -103,6 +103,12 @@
 #define NFC_SPI_SCK_PIN  SUBGHZ_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
 #define NFC_SPI_MISO_PIN SUBGHZ_SPI_MISO_PIN  // (G39)
 #define NFC_SPI_MOSI_PIN SUBGHZ_SPI_MOSI_PIN  // (G14)
+// M5Stack's own (unreleased) CapCC1101 driver declares a POWER_EN line on
+// this pin for the ST25R3916, numerically matching LORA_RST_PIN above -
+// again not a conflict, same mutual-exclusion reasoning. Their own driver
+// never actually drives it, so it may be vestigial/hardware-defaulted-on,
+// but it's a cheap thing to try if the chip reads back all-zero registers.
+#define NFC_POWER_EN_PIN 3
 // How long (ms) each discovery cycle polls before restarting - keep short
 // so the module stays responsive to ESC while idle between tags.
 #define NFC_DISCOVER_DURATION_MS 1000

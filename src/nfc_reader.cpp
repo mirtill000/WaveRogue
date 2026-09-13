@@ -267,6 +267,15 @@ namespace {
 }
 
 bool NfcReader::begin() {
+    // M5Stack's own (still-unreleased) CapCC1101 driver declares a
+    // POWER_EN line on this pin for the ST25R3916 front-end, though their
+    // driver never actually drives it in practice - worth trying anyway
+    // since it costs nothing and every prior probe reads the chip as
+    // completely silent (raw register 0x00 on both RFAL and a manual,
+    // library-independent SPI probe).
+    pinMode(NFC_POWER_EN_PIN, OUTPUT);
+    digitalWrite(NFC_POWER_EN_PIN, HIGH);
+
     pinMode(NFC_CS_PIN, OUTPUT);
     digitalWrite(NFC_CS_PIN, HIGH);
     pinMode(NFC_IRQ_PIN, INPUT); // belt-and-suspenders: the library should

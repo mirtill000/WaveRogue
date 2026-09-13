@@ -310,6 +310,22 @@ src/
    driving those two pins at the same time. `ERR_PARAM`/`ERR_REQUEST`
    point more at a driver/config mismatch than a wiring problem.
 
+   If the module reports `ERR_HW_MISMATCH` with a raw `IC_IDENTITY`
+   register readout of `0x00` (chip completely silent, confirmed both via
+   RFAL and a manual library-independent SPI probe), the pin mapping
+   itself has already been cross-checked against M5Stack's own
+   (unreleased at the time of writing) `M5Unit-NFC` CapCC1101 driver and
+   matches exactly - so it isn't a config.h transcription error. That
+   driver also declares a `POWER_EN` line on G3 for the ST25R3916 (never
+   actually driven in M5's own code, so possibly vestigial or
+   hardware-defaulted-on) - WaveRogue now drives it HIGH before init as a
+   cheap, harmless attempt. If the chip still reads back all-zero after
+   that, the remaining likely causes are a hardware/soldering fault on the
+   Cap CC1101's NFC-specific lines, or a defective/DOA ST25R3916 front-end
+   on that particular unit - worth a continuity check with a multimeter
+   on G6/G4 between the Cap-Bus connector and the chip if you're
+   comfortable opening the module.
+
 ## Keyboard controls
 
 The Cardputer keyboard has no dedicated arrow keys, so navigation reuses
