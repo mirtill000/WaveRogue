@@ -55,6 +55,28 @@ wired by hand, sharing the main SPI bus, no antenna-switch expander),
 update the pins in `config.h` accordingly and set
 `WAVEROGUE_LORA_HAS_ANT_SWITCH` to 0.
 
+The Sub-GHz pin defaults similarly match M5Stack's official **Cap
+CC1101** Cardputer Cap-Bus add-on. It plugs into the exact same physical
+Cap-Bus slot (and CS/SPI pins) as the Cap LoRa-1262 module above - on
+real hardware the two are mutually exclusive, you swap whichever cap you
+need for the LoRa Tools vs. Sub-GHz Tools menu. Two equivalent gotchas
+apply here too:
+
+1. Same dedicated SPI bus as the LoRa module (`SUBGHZ_SPI_*`, aliased to
+   the same `LORA_SPI_*` pins in `config.h` since it's physically the
+   same bus) - every `subghz_*.cpp` module opens its own `SPIClass(HSPI)`
+   for this rather than the default global `SPI`.
+2. Its antenna path is band-selected by an RF_SW0 GPIO rather than an
+   I2C expander - `subghz_rf_switch.*` drives it per M5Stack's published
+   truth table. Note only two of the three documented bands are
+   reachable (433MHz and 868/915MHz) since RF_SW1 isn't broken out on the
+   Cap-Bus header; 315MHz isn't selectable on this module.
+
+If you're using a different Sub-GHz module/wiring, update the
+`SUBGHZ_*`/`LORA_SPI_*` pins in `config.h` and adjust or remove the
+`SubGhzRfSwitch::selectForFrequency()` calls if your hardware has no such
+switch.
+
 All pin assignments and RF parameters live in **`src/config.h`** — edit
 that one file to match your actual wiring (Grove port, internal header, or
 a HAT/Unit) and your region/target frequencies. Nothing else in the

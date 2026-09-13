@@ -1,11 +1,14 @@
 #include "subghz_wmbus_scanner.h"
 #include "config.h"
 #include "ui_manager.h"
+#include "subghz_rf_switch.h"
 #include <RadioLib.h>
 #include <Arduino.h>
+#include <SPI.h>
 
 namespace {
-    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, SUBGHZ_GDO2_PIN);
+    SPIClass subghzSPI(HSPI);
+    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
     volatile uint16_t pulses[SUBGHZ_MAX_PULSES];
     volatile size_t pulseCount = 0;
@@ -157,6 +160,9 @@ bool SubGhzWmbusScanner::begin() {
     // kbps Manchester-encoded bit rate), ~50 kHz deviation. We leave OOK
     // disabled (default FSK) - receiveDirect() gives us the raw
     // demodulated bitstream on GDO0 either way.
+    subghzSPI.begin(SUBGHZ_SPI_SCK_PIN, SUBGHZ_SPI_MISO_PIN, SUBGHZ_SPI_MOSI_PIN, SUBGHZ_CS_PIN);
+    SubGhzRfSwitch::selectForFrequency(WMBUS_SMODE_FREQ_MHZ);
+
     int state = radio.begin(WMBUS_SMODE_FREQ_MHZ, 65.536f, 50.0f, 200.0f, 10, 16);
     if (state != RADIOLIB_ERR_NONE) {
         UIManager::printLine("CC1101 init failed, code " + String(state));

@@ -1,11 +1,14 @@
 #include "subghz_syncword_analyzer.h"
 #include "config.h"
 #include "ui_manager.h"
+#include "subghz_rf_switch.h"
 #include <RadioLib.h>
 #include <Arduino.h>
+#include <SPI.h>
 
 namespace {
-    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, SUBGHZ_GDO2_PIN);
+    SPIClass subghzSPI(HSPI);
+    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
     volatile uint16_t pulses[SUBGHZ_MAX_PULSES];
     volatile size_t pulseCount = 0;
@@ -105,6 +108,9 @@ namespace {
 }
 
 bool SubGhzSyncwordAnalyzer::begin() {
+    subghzSPI.begin(SUBGHZ_SPI_SCK_PIN, SUBGHZ_SPI_MISO_PIN, SUBGHZ_SPI_MOSI_PIN, SUBGHZ_CS_PIN);
+    SubGhzRfSwitch::selectForFrequency(SUBGHZ_FREQ_MHZ);
+
     int state = radio.begin(SUBGHZ_FREQ_MHZ, 4.8f, 48.0f, 135.0f, 10, 16);
     if (state != RADIOLIB_ERR_NONE) {
         UIManager::printLine("CC1101 init failed, code " + String(state));

@@ -64,17 +64,30 @@
 #define LORA_ANT_SWITCH_PIN_MASK 0x01   // P0
 
 // -----------------------------------------------------------------------
-// Sub-GHz (CC1101) module pins - separate SPI CS, shares SCK/MOSI/MISO.
-// GDO0 is used both as the RX "data available" interrupt pin (OOK/ASK raw
-// pulse capture) and, in TX mode, as the bit-banged output pin for replay.
-// NOTE: these are still PLACEHOLDERS - the Cap-Bus pinout that fixed the
-// LoRa pins above only documents the "Cap LoRa-1262" module, which has no
-// CC1101. Update these to match whatever sub-GHz module/wiring you have;
-// just make sure they don't collide with the LoRa/GPS/SD/I2C pins above.
+// Sub-GHz (CC1101) module pins - matches M5Stack's official "Cap CC1101"
+// Cardputer Cap-Bus add-on. It plugs into the SAME physical Cap-Bus slot
+// (and therefore the same CS/SPI pins) as the "Cap LoRa-1262" module
+// above - the two are mutually exclusive on real hardware, you swap
+// whichever one you need. GDO0 is used both as the RX "data available"
+// interrupt pin (OOK/ASK raw pulse capture) and, in TX mode, as the
+// bit-banged output pin for replay. This module has no GDO2 broken out
+// on the Cap-Bus header, so RADIOLIB_NC is passed for it in code.
+//
+// RF_SW0 selects the antenna path per M5Stack's published truth table;
+// RF_SW1 isn't broken out here (fixed in hardware), so only two of the
+// three documented bands are actually reachable: RF_SW0=LOW -> 433MHz
+// path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
+// is NOT selectable on this module - see subghz_rf_switch.cpp.
 // -----------------------------------------------------------------------
-#define SUBGHZ_CS_PIN     1
-#define SUBGHZ_GDO0_PIN   2
-#define SUBGHZ_GDO2_PIN   7   // optional, not required for basic OOK RX/TX
+#define SUBGHZ_CS_PIN      5    // shared with LORA_CS_PIN - same physical Cap-Bus pin
+#define SUBGHZ_GDO0_PIN    15   // CC1101_G0
+#define SUBGHZ_RF_SW0_PIN  13   // CC1101_RF_SW0 - antenna band select (see subghz_rf_switch.h)
+#define SUBGHZ_SPI_SCK_PIN  LORA_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
+#define SUBGHZ_SPI_MISO_PIN LORA_SPI_MISO_PIN  // (G39)
+#define SUBGHZ_SPI_MOSI_PIN LORA_SPI_MOSI_PIN  // (G14)
+// Frequencies at/above this are routed to the 868/915MHz antenna path;
+// below it, to the 433MHz path (see the RF Switch Control Truth Table).
+#define SUBGHZ_RF_SW_THRESHOLD_MHZ 700.0f
 
 // -----------------------------------------------------------------------
 // GNSS (GPS) module - plain UART, e.g. on the Grove port (G1/G2).

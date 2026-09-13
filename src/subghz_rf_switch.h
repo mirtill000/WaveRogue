@@ -1,0 +1,22 @@
+// =============================================================================
+// WaveRogue - subghz_rf_switch.h
+//
+// M5Stack's "Cap CC1101" Cardputer add-on routes the CC1101's antenna
+// through a band-select RF switch, controlled by the RF_SW0/RF_SW1
+// lines. Only RF_SW0 is broken out on the Cap-Bus header (RF_SW1 is
+// fixed in hardware), so per M5Stack's published truth table only two of
+// the three documented bands are actually reachable from software:
+//
+//   RF_SW0 = LOW  -> 433 MHz path
+//   RF_SW0 = HIGH -> 868/915 MHz path
+//   (315 MHz would need RF_SW1 = LOW, which isn't controllable here)
+//
+// Every Sub-GHz module must call SubGhzRfSwitch::selectForFrequency()
+// with whatever frequency it's about to use, or the CC1101 will be
+// transmitting/receiving into the wrong antenna path.
+// =============================================================================
+#pragma once
+
+namespace SubGhzRfSwitch {
+    void selectForFrequency(float freqMHz);
+}

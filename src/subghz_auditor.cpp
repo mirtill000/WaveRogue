@@ -1,12 +1,19 @@
 #include "subghz_auditor.h"
 #include "config.h"
 #include "ui_manager.h"
+#include "subghz_rf_switch.h"
 #include <RadioLib.h>
 #include <Arduino.h>
+#include <SPI.h>
 
 namespace {
 
-    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, SUBGHZ_GDO2_PIN);
+    // Cap CC1101 shares the Cap-Bus SPI pins with the Cap LoRa-1262
+    // module (same physical slot) - see the comment in lora_auditor.cpp
+    // for why this needs its own SPIClass rather than the default global
+    // `SPI` (which is wired to the Cardputer's internal display bus).
+    SPIClass subghzSPI(HSPI);
+    CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
     // -------------------------------------------------------------------
     // Raw pulse capture state. Filled by the ISR below while the CC1101
@@ -75,6 +82,9 @@ namespace {
 } // namespace
 
 bool SubGhzAuditor::begin() {
+    subghzSPI.begin(SUBGHZ_SPI_SCK_PIN, SUBGHZ_SPI_MISO_PIN, SUBGHZ_SPI_MOSI_PIN, SUBGHZ_CS_PIN);
+    SubGhzRfSwitch::selectForFrequency(SUBGHZ_FREQ_MHZ);
+
     // begin(freq, bitrate, freqDev, rxBw, power, preambleLength)
     int state = radio.begin(SUBGHZ_FREQ_MHZ, 4.8f, 48.0f, 135.0f, 10, 16);
     if (state != RADIOLIB_ERR_NONE) {
