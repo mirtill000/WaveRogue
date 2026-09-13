@@ -204,13 +204,26 @@ bool NfcReader::begin() {
 
     // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
     // CapCC1101NFC setup exactly. addSPI() resolves the shared Cap-Bus
-    // SPI pins (SCK/MOSI/MISO) itself via M5Unified's board profile for
-    // Cardputer-ADV, and the unit's own constructor already knows its
-    // CS/IRQ pins (G6/G4) - nothing to configure manually here.
-    bool unit_ready = m5::unit::wiring::addSPI(Units, unit, 10000000, 1) && Units.begin();
-    if (!unit_ready) {
+    // SPI pins (SCK/MOSI/MISO) itself via M5Unified's board profile
+    // (M5.getBoard()/M5.getPin()), and the unit's own constructor
+    // already knows its CS/IRQ pins (G6/G4) - nothing to configure
+    // manually here, PROVIDED M5Unified actually recognizes this board
+    // and resolves the Cap-Bus pins correctly. Print what it resolved so
+    // a failure here is diagnosable instead of a bare "init failed".
+    auto spiPinInfo = m5::unit::wiring::spiPins();
+    UIManager::printLine("Board: 0x" + String((unsigned)M5.getBoard(), HEX));
+    UIManager::printLine("SPI: sck=" + String(spiPinInfo.sclk) + " miso=" + String(spiPinInfo.miso) +
+                          " mosi=" + String(spiPinInfo.mosi));
+
+    bool spiAdded = m5::unit::wiring::addSPI(Units, unit, 10000000, 1);
+    UIManager::printLine(String("addSPI: ") + (spiAdded ? "ok" : "FAILED"));
+    bool unitsBegan = spiAdded && Units.begin();
+    if (spiAdded) {
+        UIManager::printLine(String("Units.begin: ") + (unitsBegan ? "ok" : "FAILED"));
+    }
+
+    if (!unitsBegan) {
         UIManager::printLine("ST25R3916 init failed");
-        UIManager::printLine("(M5UnitUnified Units.begin())");
         UIManager::printLine("Check: Cap CC1101 seated");
         UIManager::printLine("firmly in the Cap-Bus slot?");
         return false;
