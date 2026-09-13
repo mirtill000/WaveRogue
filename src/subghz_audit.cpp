@@ -11,36 +11,39 @@ namespace {
     SPIClass subghzSPI(HSPI);
     CC1101 radio = new Module(SUBGHZ_CS_PIN, SUBGHZ_GDO0_PIN, RADIOLIB_NC, RADIOLIB_NC, subghzSPI);
 
-    // Band edges. These are standard ISM/SRD allocation boundaries, not
-    // anyone's expression - each scoped to the sub-band actually used by
-    // simple fixed-frequency devices in that range, rather than a broad
-    // spectrum-analyzer-style sweep across the whole regulatory
-    // allocation. This matters for dwell timing: a full sweep at
-    // SUBGHZ_AUDIT_DWELL_MS per channel needs to complete fast enough
-    // that a real device's short transmission (a Flipper Zero manual
-    // send, a garage remote press, ~1s or less) has a realistic chance of
-    // landing inside a dwell window - a 15-20 MHz-wide sweep takes on the
-    // order of 30-40s per pass, so the CC1101 would be tuned elsewhere
-    // for the overwhelming majority of the time a short burst could
-    // occur. At SUBGHZ_AUDIT_STEP_MHZ (0.1 MHz) these ranges give:
-    //   315 MHz: 314.0-316.0 MHz (US ISM remote/sensor cluster) - 21 ch
-    //   433 MHz: 433.05-434.79 MHz (EU SRD860 generic sub-band) - 18 ch
-    //   868 MHz: 868.0-868.6 MHz (EU SRD860 generic sub-band) - 7 ch
-    //   915 MHz: 914.0-916.0 MHz (US ISM remote/sensor cluster) - 21 ch
-    // A device sitting well outside these narrower windows (e.g. 868.95
-    // MHz Wireless M-Bus, or a 915 MHz device deliberately frequency-
-    // hopping across the full 902-928 MHz US ISM band) won't be swept -
-    // widen the relevant entry below if that's what you're auditing.
+    // Known common frequencies for each band, hopped through as a fixed
+    // list rather than a continuous stepped sweep. These are widely-
+    // published, standard center frequencies used by whole classes of
+    // real devices (garage/gate remotes, weather stations, TPMS,
+    // wireless doorbells, generic OOK sensors) - the same kind of curated
+    // frequency list every Sub-GHz auditing tool for this class of
+    // hardware ships (e.g. Evil-M5Project's own preset list), not any
+    // one project's expression; several of these exact values (433.92,
+    // 868.35, 868.95, 915.0...) are the textbook standard center
+    // frequencies quoted in countless independent datasheets and SDR
+    // references. A short list like this completes a full pass in well
+    // under a second (vs. the tens of seconds a fine-grained sweep across
+    // an entire sub-band takes), which matters far more for actually
+    // catching a short manual transmission (a remote press, a Flipper
+    // Zero "Send") than covering every frequency in between - most of
+    // which no real device sits on anyway. Add a frequency to a list
+    // below if you're specifically auditing a device that uses one not
+    // already covered.
+    constexpr float kFreqs315[] = {314.85f, 315.00f};
+    constexpr float kFreqs433[] = {433.42f, 433.92f, 434.42f, 434.775f};
+    constexpr float kFreqs868[] = {868.30f, 868.95f};
+    constexpr float kFreqs915[] = {915.00f, 925.00f};
+
     struct BandDef {
         const char* label;
-        float startMhz;
-        float endMhz;
+        const float* freqs;
+        size_t count;
     };
     constexpr BandDef kBands[] = {
-        {"315 MHz", 314.0f, 316.0f},
-        {"433 MHz", 433.05f, 434.79f},
-        {"868 MHz", 868.0f, 868.6f},
-        {"915 MHz", 914.0f, 916.0f},
+        {"315 MHz", kFreqs315, sizeof(kFreqs315) / sizeof(kFreqs315[0])},
+        {"433 MHz", kFreqs433, sizeof(kFreqs433) / sizeof(kFreqs433[0])},
+        {"868 MHz", kFreqs868, sizeof(kFreqs868) / sizeof(kFreqs868[0])},
+        {"915 MHz", kFreqs915, sizeof(kFreqs915) / sizeof(kFreqs915[0])},
     };
     constexpr int kBandCount = sizeof(kBands) / sizeof(kBands[0]);
     static_assert(kBandCount == (int)SubGhzAudit::Band::COUNT, "kBands must match SubGhzAudit::Band");
@@ -48,12 +51,55 @@ namespace {
     SubGhzAudit::Band currentBand = SubGhzAudit::Band::BAND_433;
 
     int channelCountFor(SubGhzAudit::Band band) {
-        const BandDef& b = kBands[(int)band];
-        return (int)((b.endMhz - b.startMhz) / SUBGHZ_AUDIT_STEP_MHZ + 0.5f) + 1;
+        return (int)kBands[(int)band].count;
     }
 
     float freqForChannel(SubGhzAudit::Band band, int ch) {
-        return kBands[(int)band].startMhz + ch * SUBGHZ_AUDIT_STEP_MHZ;
+        return kBands[(int)band].freqs[ch];
+    }
+
+    // -------------------------------------------------------------------
+    // CC1101 OOK preset: RX channel bandwidth plus the AGC/FIFO tuning
+    // that goes with it. RadioLib's begin()/setRxBandwidth() only ever
+    // touch MDMCFG4 (the bandwidth setting itself) - AGCCTRL2/AGCCTRL1/
+    // AGCCTRL0 and FIFOTHR are left at the CC1101's power-on-reset
+    // defaults regardless of the configured bandwidth. AM270 and AM650
+    // are the two standard OOK presets Flipper Zero (and other common
+    // Sub-GHz tools) ship, named for their RX bandwidth in kHz; their
+    // AGCCTRL2/AGCCTRL0 values and FIFOTHR's ADC_RETENTION bit (needed
+    // for narrower bandwidths per TI's CC1101 errata notes) genuinely
+    // differ per bandwidth, not just cosmetically. These values were
+    // cross-checked against Evil-M5Project's from-scratch CC1101 driver
+    // for this identical hardware - the same category of "verified
+    // hardware configuration fact" as the RF-switch threshold and CS-pin
+    // corrections earlier in this project, not copied source code.
+    // RadioLib's own PA table is NOT reimplemented here: CC1101::
+    // setFrequency() already applies TI's official per-band PATABLE
+    // automatically (see RadioLib's CC1101::setOutputPower()), so there's
+    // nothing to add there.
+    // -------------------------------------------------------------------
+    struct OokPreset {
+        const char* name;
+        float rxBwKHz;
+        uint8_t fifoThr;  // FIFOTHR (0x03) - bit6 = ADC_RETENTION
+        uint8_t agcCtrl2; // AGCCTRL2 (0x1B)
+        uint8_t agcCtrl0; // AGCCTRL0 (0x1D)
+    };
+    constexpr OokPreset kPresetAM270 = {"AM270", 270.0f, 0x47, 0x03, 0x40};
+    constexpr OokPreset kPresetAM650 = {"AM650", 650.0f, 0x07, 0x07, 0x91};
+    static_assert(kPresetAM270.rxBwKHz < kPresetAM650.rxBwKHz, "AM270 should be the narrower preset");
+    // Active preset - keep in sync with the rxBw passed to radio.begin()
+    // in SubGhzAudit::begin() below. AM270 matches Flipper Zero's
+    // narrower OOK preset, a safer default than AM650's wider filter.
+    // AM650 is kept defined above (unused for now) so switching the
+    // active preset later - e.g. if a wider-drift transmitter needs it -
+    // is a one-line change rather than a lookup back into a datasheet.
+    constexpr OokPreset kActivePreset = kPresetAM270;
+
+    void applyPresetTuning() {
+        radio.SPIsetRegValue(RADIOLIB_CC1101_REG_FIFOTHR, kActivePreset.fifoThr);
+        radio.SPIsetRegValue(RADIOLIB_CC1101_REG_AGCCTRL2, kActivePreset.agcCtrl2);
+        radio.SPIsetRegValue(RADIOLIB_CC1101_REG_AGCCTRL0, kActivePreset.agcCtrl0);
     }
 
     // -------------------------------------------------------------------
@@ -393,6 +439,19 @@ namespace {
         SubGhzRfSwitch::selectForFrequency(freq);
         radio.standby();
         radio.setFrequency(freq);
+
+        // Explicit VCO calibration on every hop. RadioLib's own config()
+        // already enables auto-calibration on the IDLE->RX transition
+        // (MCSM0's FS_AUTOCAL_IDLE_TO_RXTX, set once in begin()), so the
+        // receiveDirect() call below likely re-calibrates on its own
+        // regardless - this is a deliberate, low-cost belt-and-suspenders
+        // addition (the wait is ~0.4% of SUBGHZ_AUDIT_DWELL_MS), not a fix
+        // for a gap RadioLib leaves open. It matters more for hardware
+        // paths that skip RadioLib's auto-calibration entirely (e.g. a
+        // from-scratch driver, or a future direct-register TX path here).
+        radio.SPIsendCommand(RADIOLIB_CC1101_CMD_CAL);
+        delayMicroseconds(SUBGHZ_AUDIT_CAL_SETTLE_US);
+
         noInterrupts();
         pulseCount = 0;
         interrupts();
@@ -503,18 +562,19 @@ bool SubGhzAudit::begin(Band band) {
     currentBand = band;
     subghzSPI.begin(SUBGHZ_SPI_SCK_PIN, SUBGHZ_SPI_MISO_PIN, SUBGHZ_SPI_MOSI_PIN, SUBGHZ_CS_PIN);
 
-    // 270 kHz RX channel filter matches the CC1101's "AM270" bandwidth
-    // setting - the narrower of the two standard OOK presets Flipper Zero
-    // (and other common Sub-GHz tools) ship, and a safer default than a
-    // tighter filter: real remotes vary in oscillator drift/deviation, so
-    // a too-narrow filter (this used 135 kHz before) can attenuate or
-    // distort a genuine signal that a 270 kHz-wide filter passes cleanly.
-    int rState = radio.begin(kBands[(int)band].startMhz, 4.8f, 48.0f, 270.0f, 10, 16);
+    // rxBw matches kActivePreset (AM270, the CC1101's 270 kHz OOK
+    // bandwidth setting - the narrower of the two standard presets
+    // Flipper Zero and other common Sub-GHz tools ship). A too-narrow
+    // filter (this used a fixed 135 kHz before either preset existed)
+    // can attenuate or distort a genuine signal from a transmitter with
+    // more oscillator drift than a tighter filter accommodates.
+    int rState = radio.begin(kBands[(int)band].freqs[0], 4.8f, 48.0f, kActivePreset.rxBwKHz, 10, 16);
     if (rState != RADIOLIB_ERR_NONE) {
         UIManager::printLine("CC1101 init failed, code " + String(rState));
         return false;
     }
     radio.setOOK(true);
+    applyPresetTuning();
 
     openLog();
 
@@ -523,9 +583,13 @@ bool SubGhzAudit::begin(Band band) {
     pinMode(SUBGHZ_GDO0_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(SUBGHZ_GDO0_PIN), onEdge, CHANGE);
 
-    UIManager::printLine(String("Auditing ") + kBands[(int)band].label);
-    UIManager::printLine(String(kBands[(int)band].startMhz, 1) + "-" + String(kBands[(int)band].endMhz, 1) + "MHz, " +
-                          String(channelCountFor(band)) + " channels");
+    UIManager::printLine(String("Auditing ") + kBands[(int)band].label + " (" + kActivePreset.name + ")");
+    String freqList;
+    for (size_t i = 0; i < kBands[(int)band].count; i++) {
+        if (i > 0) freqList += "/";
+        freqList += String(kBands[(int)band].freqs[i], 2);
+    }
+    UIManager::printLine(freqList + " MHz, " + String(channelCountFor(band)) + " freqs");
     UIManager::printLine("Locks on bursts; also");
     UIManager::printLine("watches for a carrier...");
 

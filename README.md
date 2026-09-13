@@ -188,14 +188,15 @@ src/
 ## Sub-GHz Tools
 
 A single **Sub-GHz Audit** module. On entry it asks which ISM-band preset
-to sniff — **315, 433, 868, or 915 MHz** — then sweeps that band alone
-looking for activity:
+to sniff — **315, 433, 868, or 915 MHz** — then hops through that band's
+curated list of known common frequencies looking for activity:
 
-- **Sweep & lock** — hops across the band a short dwell at a time, the
-  same way a spectrum-analyzer-style scanner does; as soon as a channel
-  shows enough raw OOK/ASK edges to look like a real burst (not noise), it
-  locks on and captures the full pulse train, live, until the channel goes
-  quiet again.
+- **Hop & lock** — visits a short, curated list of known common
+  frequencies for the selected band (see the table below), a short dwell
+  at a time, rather than a continuous stepped sweep across the whole
+  sub-band; as soon as a frequency shows enough raw OOK/ASK edges to look
+  like a real burst (not noise), it locks on and captures the full pulse
+  train, live, until it goes quiet again.
 - **Continuous-carrier watch** — runs at the same time as the sweep/lock
   logic above: if RSSI stays above threshold far longer than any data
   burst would, that's flagged separately as a possible active analog
@@ -224,9 +225,10 @@ looking for activity:
   rolling code instead.
 
 Every finding (capture, repeat, continuous carrier) is appended to
-`subghz_audit_log.csv` on the SD card. Tune the sweep step/dwell,
-detection thresholds, and history size via the `SUBGHZ_AUDIT_*` macros in
-`config.h`.
+`subghz_audit_log.csv` on the SD card. Tune the dwell time, detection
+thresholds, and history size via the `SUBGHZ_AUDIT_*` macros in
+`config.h`; the frequency lists themselves live in `subghz_audit.cpp`'s
+`kFreqs315`/`kFreqs433`/`kFreqs868`/`kFreqs915`.
 
 **315 MHz caveat:** the Cap CC1101's antenna switch (`RF_SW0`) has only
 one fully-selectable path in software, shared by 433/868/915 MHz (see
@@ -236,46 +238,63 @@ gets the closer of the two available options (`RF_SW0` low), just
 without a complete match, so expect reduced range/sensitivity there
 compared to the other three bands.
 
-**On sweep width vs. catching short transmissions:** all four presets are
-scoped to the sub-band actually used by simple fixed-frequency devices in
-that range, rather than a wide spectrum-analyzer-style sweep across the
-whole regulatory allocation - specifically so a full sweep completes in a
-few seconds instead of tens of seconds:
+**On frequency lists vs. catching short transmissions:** each preset
+hops through a short list of specific, widely-known center frequencies
+actually used by real devices in that band, rather than stepping through
+every frequency across a whole sub-band - most of which no real device
+sits on anyway:
 
-| Preset | Range | Channels |
-|--------|-------|----------|
-| 315 MHz | 314.0–316.0 MHz | ~21 |
-| 433 MHz | 433.05–434.79 MHz | ~18 |
-| 868 MHz | 868.0–868.6 MHz | ~7 |
-| 915 MHz | 914.0–916.0 MHz | ~21 |
+| Preset | Frequencies (MHz) |
+|--------|--------------------|
+| 315 MHz | 314.85, 315.00 |
+| 433 MHz | 433.42, 433.92, 434.42, 434.775 |
+| 868 MHz | 868.30, 868.95 |
+| 915 MHz | 915.00, 925.00 |
 
 A short manual transmission (a Flipper Zero "Send", a garage remote
 press - often under a second) has to land inside the CC1101's dwell
-window on the right channel to be caught at all; at the default
-`SUBGHZ_AUDIT_DWELL_MS`/`SUBGHZ_AUDIT_STEP_MHZ`, a 15-20 MHz-wide sweep
-(what these presets used before being scoped down) takes on the order of
-30-40 seconds per pass, so a one-off short burst is likely to be missed
-even though reception itself works fine. The tradeoff is coverage: a
-device sitting well outside these narrower windows (e.g. 868.95 MHz
-Wireless M-Bus, or a 915 MHz device frequency-hopping across the full
-902-928 MHz US ISM band) won't be swept at all. Hold/repeat a
-transmission for the width of a full sweep pass if a single send isn't
-being picked up, or widen the relevant entry in `subghz_audit.cpp`'s
-`kBands[]` if you're specifically auditing a device outside these
-ranges.
+window on the right frequency to be caught at all. With only 2-4 stops
+per band at the default `SUBGHZ_AUDIT_DWELL_MS` (200ms), a full pass
+completes in well under a second - a dramatic improvement over stepping
+through an entire sub-band (tens of seconds per pass, tried and scoped
+down before landing on this fixed-list approach), so a one-off short
+burst is now overwhelmingly likely to land inside a dwell window on the
+right frequency. The tradeoff is coverage: a device sitting on a
+frequency not in the list (even one within the same band) won't be
+found. Add its frequency to the relevant list in `subghz_audit.cpp` if
+you're specifically auditing a device that isn't already covered.
 
-The overall sweep/lock/decode/repeat-detect approach - including
-decoding every repeat of a captured frame independently and
-cross-checking them against each other for higher-confidence results -
-follows the same general design used by other Sub-GHz auditing tools for
-Cardputer-class hardware (e.g. the CC1101 tooling in
+**Radio tuning (AGC and calibration):** the CC1101's RX bandwidth is set
+to 270 kHz - the "AM270" preset Flipper Zero (and other common Sub-GHz
+tools) use for OOK, safer than a narrower filter for real transmitters
+with typical oscillator drift. RadioLib's own `begin()`/`setRxBandwidth()`
+only touch the bandwidth register itself, though - the AGC settings
+(AGCCTRL2/AGCCTRL0) and FIFO threshold (which also gates a narrow-
+bandwidth sensitivity setting per TI's CC1101 errata notes) are tuned to
+match, applied once at startup via direct SPI register access (RadioLib's
+`RADIOLIB_LOW_LEVEL` build flag, set in `platformio.ini`). The module also
+issues an explicit VCO calibration strobe on every frequency hop, ensuring
+accurate tuning even when hopping quickly between the frequencies in a
+band's list. (RadioLib's own per-band TX power table is already applied
+automatically on every frequency change and isn't reimplemented here.)
+
+The overall hop/lock/decode/repeat-detect approach - including decoding
+every repeat of a captured frame independently and cross-checking them
+against each other for higher-confidence results, hopping a curated
+frequency list instead of sweeping a whole sub-band, and tuning AGC and
+issuing an explicit calibration strobe per hop - follows the same general
+design used by other Sub-GHz auditing tools for Cardputer-class hardware
+(e.g. the CC1101 tooling in
 [Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project), which
 uses a richer table-driven multi-protocol decoder built on the same
-idea). That architecture and general PT2262/EV1527/Holtek HT12x public
-timing facts are independently implemented here rather than copied,
-since that project's repository carries no explicit open-source license
-- WaveRogue's decoder is deliberately simpler (one generic shape plus a
-bit-count family label, not a maintained per-protocol table).
+idea, its own curated frequency list, and its own from-scratch AGC/
+calibration handling). That architecture, general PT2262/EV1527/Holtek
+HT12x public timing facts, and cross-checked CC1101 hardware
+configuration values (the RF-switch threshold, AGC/FIFO register
+settings) are independently implemented/verified here rather than
+copied, since that project's repository carries no explicit open-source
+license - WaveRogue's decoder is deliberately simpler (one generic shape
+plus a bit-count family label, not a maintained per-protocol table).
 
 ## NFC Tools
 

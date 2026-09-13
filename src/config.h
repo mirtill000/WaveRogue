@@ -157,9 +157,10 @@
 // =============================================================================
 // Sub-GHz Audit
 // =============================================================================
-// Sweeps whichever ISM-band preset the operator picks (315/433/868/
-// 915 MHz - see subghz_audit.h), dwelling briefly on each channel.
-// Two things can trigger a finding on a channel:
+// Hops across whichever ISM-band preset the operator picks (315/433/868/
+// 915 MHz - see subghz_audit.h's kFreqs315/433/868/915 for the actual
+// frequency lists), dwelling briefly on each one. Two things can trigger
+// a finding on a frequency:
 //   - Enough raw OOK/ASK edges during one dwell to look like an actual
 //     burst transmission (as opposed to noise) - the module locks on and
 //     captures the full pulse train.
@@ -173,8 +174,13 @@
 // history on the same channel to flag an exact repeat (static/fixed
 // code, 100% replay-vulnerable) versus a different payload every time
 // (possible rolling code).
-#define SUBGHZ_AUDIT_STEP_MHZ            0.10f
 #define SUBGHZ_AUDIT_DWELL_MS            200
+// How long to wait after an explicit VCO calibration strobe (CC1101
+// CMD_CAL) before the next state transition - TI's CC1101 datasheet
+// gives ~721us typical calibration time; this rounds up for margin.
+// Negligible next to SUBGHZ_AUDIT_DWELL_MS above, so it doesn't meaningfully
+// slow down hopping between the frequencies in a band's list.
+#define SUBGHZ_AUDIT_CAL_SETTLE_US       800
 // Edges captured during one dwell window above this many means "this
 // looks like a real transmission, not just noise" - lock onto it.
 #define SUBGHZ_AUDIT_MIN_PULSES          6

@@ -3,8 +3,10 @@
 //
 // Sub-GHz Audit: a single module replacing the earlier set of separate
 // Sub-GHz tools. The operator picks one of four ISM-band presets (315,
-// 433, 868, 915 MHz) before starting; the module then sweeps that band
-// looking for activity and reports what it finds:
+// 433, 868, 915 MHz) before starting; the module then hops through that
+// band's curated list of known common frequencies (see kFreqs315/433/
+// 868/915 in subghz_audit.cpp) - not a continuous stepped sweep - and
+// reports what it finds:
 //
 //   - A continuous carrier held above an RSSI threshold for several
 //     seconds is flagged as a possible active transmitter/bug (as
