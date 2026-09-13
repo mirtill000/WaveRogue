@@ -276,6 +276,16 @@ bool NfcReader::begin() {
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
 
+    // The Cap CC1101 board carries BOTH the CC1101 (CS=SUBGHZ_CS_PIN/G5)
+    // and the ST25R3916 (CS=NFC_CS_PIN/G6) on the same physical board,
+    // sharing the same SPI bus (SCK/MOSI/MISO) - unlike the Cap LoRa-1262,
+    // which is a mutually-exclusive, entirely separate cap. Nothing in the
+    // RFAL/ST25R3916 driver ever touches the CC1101's CS line, so if it's
+    // left floating or low, the CC1101 can contend on the shared MISO
+    // line during every NFC transaction. Explicitly deselect it here.
+    pinMode(SUBGHZ_CS_PIN, OUTPUT);
+    digitalWrite(SUBGHZ_CS_PIN, HIGH);
+
     pinMode(NFC_CS_PIN, OUTPUT);
     digitalWrite(NFC_CS_PIN, HIGH);
     pinMode(NFC_IRQ_PIN, INPUT); // belt-and-suspenders: the library should
