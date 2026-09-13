@@ -79,7 +79,19 @@
 // path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
 // is NOT selectable on this module - see subghz_rf_switch.cpp.
 // -----------------------------------------------------------------------
-#define SUBGHZ_CS_PIN      5    // shared with LORA_CS_PIN - same physical Cap-Bus pin
+// DIAGNOSTIC EXPERIMENT (see README's NFC troubleshooting section): the
+// Cap CC1101's own printed silkscreen label says CC_CS=G6/NFC_CS=G5 -
+// the OPPOSITE of what M5's own M5UnitUnified source code hardcodes
+// (PIN_CS_ST25R3916=6, PIN_CS_CC1101=5) and what this project has used
+// since the very first CC1101 bring-up (5, confirmed working via
+// RadioLib's own chip-version check). Since this pin is ours to control
+// (unlike NFC's, hardcoded inside the vendored M5 library), temporarily
+// testing 6 here is the cheapest way to find out which side is wrong for
+// this specific unit: if the CC1101 stops responding with CS=6, G5 was
+// correct all along and the label doesn't apply to this hardware
+// revision; if it keeps working, the label may be trustworthy after all
+// and the NFC side would need the library's hardcoded pin patched too.
+#define SUBGHZ_CS_PIN      6
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
 #define SUBGHZ_RF_SW0_PIN  13   // CC1101_RF_SW0 - antenna band select (see subghz_rf_switch.h)
 #define SUBGHZ_SPI_SCK_PIN  LORA_SPI_SCK_PIN   // shared Cap-Bus SPI bus (G40)
