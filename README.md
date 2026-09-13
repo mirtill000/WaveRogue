@@ -211,6 +211,18 @@ rm -rf .pio
 pio run -e cardputer
 ```
 
+Also note that `lib_deps` deliberately does NOT pin `m5stack/M5GFX` or
+`m5stack/M5Unified` directly - `m5stack/M5Cardputer` already depends on
+specific, mutually-compatible versions of both. Pinning them again at the
+top level lets PlatformIO's resolver satisfy a looser range with a newer
+release instead, which can pull in a M5Unified version that has since
+removed/renamed APIs (e.g. `Button_Class::getButton()`) that this
+M5Cardputer release still calls, causing a
+`has no member named 'getButton'` build error. If you need a newer
+M5Unified/M5GFX for some other reason, update `m5stack/M5Cardputer` to a
+release that's actually compatible with it rather than pinning them
+independently.
+
 ## A note on scope and honesty
 
 Several of the newer Sub-GHz modules (weather decode, wM-Bus, POCSAG,
