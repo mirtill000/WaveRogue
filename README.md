@@ -104,6 +104,7 @@ same driver interface, so the rest of the LoRa code is unaffected.
 
 ```
 platformio.ini                 Board, framework, and library dependencies
+lib/                            Vendored NFC-RFAL + ST25R3916_ELECHOUSE (see "NFC Tools" below)
 src/
   config.h                     All pin/frequency/threshold macros (edit this for your hardware)
   main.cpp                     Two-level menu state machine, dispatches to modules
@@ -257,28 +258,34 @@ src/
    **same Cap CC1101 module** as the CC1101 (same Cap-Bus slot/SPI bus,
    separate CS/IRQ - `NFC_CS_PIN`/`NFC_IRQ_PIN` in `config.h`). It's built
    on the ESP32-validated "ST25R3916 + NFC-RFAL" Arduino library
-   (`rfal_nfc.h`/`rfal_mf1.h`) rather than a from-scratch ISO14443A/
-   Crypto1 implementation:
+   (`rfal_nfc.h`/`rfal_mf1.h`, from
+   [wilson-elechouse/ST25R3916](https://github.com/wilson-elechouse/ST25R3916))
+   rather than a from-scratch ISO14443A/Crypto1 implementation. That
+   library is already **vendored into this repo** under `lib/NFC-RFAL/`
+   and `lib/ST25R3916_ELECHOUSE/` - PlatformIO picks both up automatically
+   (each has its own `library.properties`), no extra install step needed.
+   If you ever need to update it: re-clone the repo above and replace
+   those two folders (its GitHub Actions workflow folder is stripped out;
+   nothing else needs to change).
 
-   ```
-   git clone https://github.com/wilson-elechouse/ST25R3916 /tmp/st25r3916-lib
-   mkdir -p lib
-   cp -r /tmp/st25r3916-lib/NFC-RFAL lib/
-   cp -r /tmp/st25r3916-lib/ST25R3916_ELECHOUSE lib/
-   ```
+   A **known, bounded limitation of this first version**: a full sweep of
+   a locked 4K card (40 sectors × 2 key types × the dictionary in
+   `nfc_reader.cpp`) can take on the order of tens of seconds and isn't
+   interruptible mid-sweep - the status bar keeps updating per sector so
+   it's clear the device hasn't frozen. The dictionary itself is
+   intentionally small and clearly labeled as non-exhaustive: a sector
+   that resists every key in it is *not* proven secure, only not
+   trivially default-keyed.
 
-   That repo holds two separate library folders at its root, which a
-   single `lib_deps` git URL isn't guaranteed to resolve into two usable
-   libraries - copying both into this project's own `lib/` directory (as
-   above) is the reliable path, since PlatformIO always scans a project's
-   local `lib/` folder. A **known, bounded limitation of this first
-   version**: a full sweep of a locked 4K card (40 sectors × 2 key types ×
-   the dictionary in `nfc_reader.cpp`) can take on the order of tens of
-   seconds and isn't interruptible mid-sweep - the status bar keeps
-   updating per sector so it's clear the device hasn't frozen. The
-   dictionary itself is intentionally small and clearly labeled as
-   non-exhaustive: a sector that resists every key in it is *not* proven
-   secure, only not trivially default-keyed.
+   **Licensing note:** `lib/NFC-RFAL` and `lib/ST25R3916_ELECHOUSE` are
+   STMicroelectronics/ELECHOUSE code under ST's own SLA0052 license (see
+   the `LICENSE` file in each folder) - not MIT/Apache like the rest of
+   this project's dependencies. SLA0052 permits redistribution but
+   restricts use to "an integrated circuit that is manufactured by or for
+   STMicroelectronics and is an NFC tag, NFC dynamic tag, NFC reader, or
+   UHF reader" (the ST25R3916 qualifies) and forbids relicensing that code
+   under an open-source license. This only affects those two vendored
+   folders - it doesn't change how you can license the rest of WaveRogue.
 
 ## Keyboard controls
 
