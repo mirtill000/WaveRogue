@@ -30,6 +30,9 @@ namespace {
     m5::nfc::NFCLayerA nfc_a{unit};
 
     bool sdReady = false;
+    // Guards against re-running the whole ST25R3916 bring-up sequence on
+    // every menu re-entry - see the comment in NfcReader::begin().
+    bool chipInitialized = false;
 
     // -------------------------------------------------------------------
     // A small, widely-published dictionary of MIFARE Classic default/
@@ -193,6 +196,20 @@ namespace {
 }
 
 bool NfcReader::begin() {
+    if (chipInitialized) {
+        // Re-entering the module after a previous successful init this
+        // boot. Units.begin() runs the ST25R3916's whole bring-up
+        // sequence again (chip-ID retry loop, CMD_SET_DEFAULT, oscillator
+        // enable, RF field on, ...) - calling it a second time on an
+        // already-initialized chip with its RF field already on is what
+        // caused "works once right after power-on, fails on every visit
+        // after that". Only bring the chip up once per boot; subsequent
+        // entries just resume polling.
+        UIManager::printLine("ST25R3916 already initialized");
+        UIManager::printLine("Present an NFC-A tag/badge");
+        return true;
+    }
+
     // M5Stack's own CapCC1101 driver documents a POWER_EN line on this
     // pin for the ST25R3916 front-end but never actually drives it
     // itself (confirmed by reading their unit_ST25R3916.cpp source) -
@@ -220,16 +237,9 @@ bool NfcReader::begin() {
     // (M5.getBoard()/M5.getPin()); the unit's CS is passed explicitly
     // above (NFC_CS_PIN) rather than trusting the library's default.
     // Print what addSPI() resolved so a failure here is diagnosable
-    // instead of a bare "init failed".
-    //
-    // The earlier "drop to 1 MHz" experiment here (when every driver
-    // attempt read a different garbage byte from IC_IDENTITY regardless
-    // of speed) turned out to be chasing the wrong culprit: the real
-    // issue was CS itself pointing at the CC1101, not the ST25R3916 -
-    // every "NFC" register read was actually landing on the CC1101's own
-    // status byte, which explains the inconsistent-but-repeatable
-    // garbage far better than a clock-speed/signal-integrity theory
-    // ever did. Back to 10 MHz now that CS is corrected.
+    // instead of a bare "init failed". See README's NFC Tools section
+    // for the full debugging history behind these specific pin/deselect
+    // choices.
     auto spiPinInfo = m5::unit::wiring::spiPins();
     UIManager::printLine("Board: 0x" + String((unsigned)M5.getBoard(), HEX));
     UIManager::printLine("SPI: sck=" + String(spiPinInfo.sclk) + " miso=" + String(spiPinInfo.miso) +
@@ -256,6 +266,7 @@ bool NfcReader::begin() {
         UIManager::printLine("[!] SD card init failed");
     }
 
+    chipInitialized = true;
     UIManager::printLine("ST25R3916 ready");
     UIManager::printLine("Present an NFC-A tag/badge");
     UIManager::printLine("(MIFARE Classic: default-key");
