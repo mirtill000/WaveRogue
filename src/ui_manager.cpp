@@ -14,6 +14,12 @@ namespace {
         return false;
     }
 
+    // ---- Persistent status bar (bottom of screen) ----
+    constexpr int kStatusBarHeight = 9;
+    String lastStatusText;
+    uint32_t lastStatusDrawMillis = 0;
+    int statusSpinnerIdx = 0;
+
     // ---- Scrolling log buffer for module screens ----
     constexpr int kMaxLogLines = 8;
     String logLines[kMaxLogLines];
@@ -21,8 +27,10 @@ namespace {
 
     void redrawLog() {
         auto& d = M5Cardputer.Display;
-        // Log area starts below the header (drawn separately by drawHeader).
-        d.fillRect(0, 14, d.width(), d.height() - 14, TFT_BLACK);
+        // Log area starts below the header and stops above the status
+        // bar (drawn separately by drawHeader()/setStatus()) so redrawing
+        // the log never paints over it.
+        d.fillRect(0, 14, d.width(), d.height() - 14 - kStatusBarHeight, TFT_BLACK);
         d.setTextColor(TFT_GREEN, TFT_BLACK);
         d.setTextSize(1);
         for (int i = 0; i < logCount; i++) {
@@ -137,6 +145,11 @@ void UIManager::drawHeader(const char* title) {
     d.println(title);
     d.drawFastHLine(0, 12, d.width(), TFT_DARKGREY);
     clearLog();
+
+    // Force the next setStatus() call to draw immediately, even if it
+    // happens to pass the same text a previous module last showed.
+    lastStatusText = "";
+    lastStatusDrawMillis = 0;
 }
 
 void UIManager::printLine(const String& line) {
@@ -154,4 +167,26 @@ void UIManager::printLine(const String& line) {
 void UIManager::clearLog() {
     logCount = 0;
     redrawLog();
+}
+
+void UIManager::setStatus(const String& text) {
+    uint32_t now = millis();
+    // Redraw when the text actually changes, or periodically anyway so
+    // the spinner keeps turning - that motion is the point: it's the
+    // difference between "still working" and "frozen".
+    if (text == lastStatusText && now - lastStatusDrawMillis < 200) return;
+    lastStatusText = text;
+    lastStatusDrawMillis = now;
+    statusSpinnerIdx = (statusSpinnerIdx + 1) % 4;
+
+    auto& d = M5Cardputer.Display;
+    int barY = d.height() - kStatusBarHeight;
+    d.fillRect(0, barY, d.width(), kStatusBarHeight, TFT_NAVY);
+    d.setTextColor(TFT_WHITE, TFT_NAVY);
+    d.setTextSize(1);
+    d.setCursor(2, barY + 1);
+    static const char kSpinner[] = {'|', '/', '-', '\\'};
+    d.print(kSpinner[statusSpinnerIdx]);
+    d.print(' ');
+    d.print(text);
 }

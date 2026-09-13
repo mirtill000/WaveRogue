@@ -95,6 +95,8 @@ void GwmpSniffer::loop() {
         currentChannel = (currentChannel % 13) + 1;
         esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
     }
+    UIManager::setStatus("Scanning Wi-Fi ch " + String(currentChannel) +
+                          " (" + String(packetsMatched) + " found)...");
 
     if (!pendingCapture) return;
 

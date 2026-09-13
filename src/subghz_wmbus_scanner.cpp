@@ -176,6 +176,8 @@ bool SubGhzWmbusScanner::begin() {
 }
 
 void SubGhzWmbusScanner::loop() {
+    UIManager::setStatus("Scanning " + String(WMBUS_SMODE_FREQ_MHZ, 2) + "MHz for meters...");
+
     static uint32_t lastDump = 0;
     if (millis() - lastDump < 500) return;
     lastDump = millis();

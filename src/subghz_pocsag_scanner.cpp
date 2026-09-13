@@ -152,6 +152,8 @@ bool SubGhzPocsagScanner::begin() {
 }
 
 void SubGhzPocsagScanner::loop() {
+    UIManager::setStatus("Listening for POCSAG traffic...");
+
     static uint32_t lastDump = 0;
     if (millis() - lastDump < 600) return;
     lastDump = millis();

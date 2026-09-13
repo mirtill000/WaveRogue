@@ -106,6 +106,8 @@ void SubGhzAuditor::sniffBegin() {
 }
 
 void SubGhzAuditor::sniffLoop() {
+    UIManager::setStatus("Capturing OOK/ASK pulses...");
+
     // Every so often, dump whatever has been captured so far and reset,
     // so long transmissions don't just fill the buffer once and go quiet.
     static uint32_t lastDump = 0;
@@ -152,6 +154,8 @@ void SubGhzAuditor::replayBegin() {
 }
 
 void SubGhzAuditor::replayLoop() {
+    UIManager::setStatus(recordedCount > 0 ? "Ready - press ENTER to replay" : "Waiting for a signal to record...");
+
     // Keep pulling the freshest capture into `recordedPulses` until the
     // operator is happy and hits Enter - this way the buffer always holds
     // the most recent complete button-press.

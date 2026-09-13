@@ -145,6 +145,8 @@ bool SubGhzStaticCode::begin() {
 }
 
 void SubGhzStaticCode::loop() {
+    UIManager::setStatus("Waiting for button press...");
+
     noInterrupts();
     size_t count = liveCount;
     uint32_t idleFor = micros() - lastEdgeMicros;

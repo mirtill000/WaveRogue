@@ -77,4 +77,13 @@ namespace UIManager {
     void drawHeader(const char* title);
     void printLine(const String& line);   // appends a line to the scrolling log area
     void clearLog();
+
+    // Persistent one-line status indicator pinned to the bottom of the
+    // screen (below the scrolling log), with a small spinner so it's
+    // visibly "alive" even when the text itself doesn't change tick to
+    // tick - e.g. "Acquiring GPS satellites...", "Scanning...",
+    // "Listening for beacon...". Cheap to call every loop() iteration:
+    // internally throttled to redraw only when the text changes or
+    // enough time has passed to advance the spinner.
+    void setStatus(const String& text);
 }

@@ -53,6 +53,8 @@ void SubGhzBugDetector::loop() {
     uint32_t now = millis();
     bool above = rssi > BUG_CARRIER_RSSI_THRESHOLD_DBM;
 
+    UIManager::setStatus(above ? "Signal present - confirming..." : "Sweeping frequencies...");
+
     if (above) {
         if (aboveThresholdSince == 0) aboveThresholdSince = now;
         uint32_t dur = now - aboveThresholdSince;

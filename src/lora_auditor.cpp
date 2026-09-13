@@ -188,6 +188,8 @@ bool LoraAuditor::begin() {
 }
 
 void LoraAuditor::sniffLoop() {
+    UIManager::setStatus("Scanning for LoRa frames...");
+
     // Blocking receive with a short timeout so the caller's key-poll loop
     // (checking for ESC/back) still gets serviced regularly.
     int state = radio.receive(frameBuf, kMaxFrameLen);
@@ -216,11 +218,23 @@ void LoraAuditor::wardriveBegin() {
 
 void LoraAuditor::wardriveLoop() {
     GpsLogger::update();
+
+    // Independent of whether any LoRa traffic shows up - this used to
+    // only update when a packet was also received, so it could sit on
+    // "no fix yet" (or nothing at all) indefinitely while actually
+    // acquiring satellites in the background.
+    if (GpsLogger::hasFix()) {
+        UIManager::setStatus("GPS fix OK (" + String(GpsLogger::satellites()) + " sats) - listening...");
+    } else {
+        int sats = GpsLogger::satellites();
+        UIManager::setStatus(sats > 0 ? "Acquiring GPS fix (" + String(sats) + " sats seen)..."
+                                       : "Acquiring GPS satellites...");
+    }
+
     int state = radio.receive(frameBuf, kMaxFrameLen);
     if (state == RADIOLIB_ERR_NONE) {
         size_t len = radio.getPacketLength();
         handleFrame(frameBuf, len, radio.getRSSI(), radio.getSNR());
-        UIManager::printLine(GpsLogger::hasFix() ? "GPS: fix OK" : "GPS: no fix yet");
     }
 }
 
@@ -244,6 +258,8 @@ void LoraAuditor::rogueGatewayBegin() {
 }
 
 void LoraAuditor::rogueGatewayLoop() {
+    UIManager::setStatus("Listening for Join-Requests...");
+
     int state = radio.receive(frameBuf, kMaxFrameLen);
     if (state == RADIOLIB_ERR_NONE) {
         size_t len = radio.getPacketLength();
@@ -352,6 +368,7 @@ void LoraAuditor::devAddrScanBegin() {
 }
 
 void LoraAuditor::devAddrScanLoop() {
+    UIManager::setStatus("Scanning for LoRa devices...");
     bool got = pollInventoryOnce();
     if (got || millis() - lastInventoryRedraw > 600) {
         lastInventoryRedraw = millis();
@@ -368,6 +385,7 @@ void LoraAuditor::netIdScanBegin() {
 }
 
 void LoraAuditor::netIdScanLoop() {
+    UIManager::setStatus("Scanning + identifying networks...");
     bool got = pollInventoryOnce();
     if (got || millis() - lastInventoryRedraw > 800) {
         lastInventoryRedraw = millis();
@@ -384,6 +402,7 @@ void LoraAuditor::plaintextScanBegin() {
 }
 
 void LoraAuditor::plaintextScanLoop() {
+    UIManager::setStatus("Scanning payload entropy...");
     bool got = pollInventoryOnce();
     if (got || millis() - lastInventoryRedraw > 800) {
         lastInventoryRedraw = millis();

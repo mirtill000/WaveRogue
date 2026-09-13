@@ -30,6 +30,10 @@ double GpsLogger::longitude() {
     return gps.location.isValid() ? gps.location.lng() : 0.0;
 }
 
+int GpsLogger::satellites() {
+    return gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+}
+
 String GpsLogger::timeString() {
     if (!gps.time.isValid()) return "00:00:00";
     char buf[9];

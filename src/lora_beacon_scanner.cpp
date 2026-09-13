@@ -56,6 +56,10 @@ bool LoraBeaconScanner::begin() {
 }
 
 void LoraBeaconScanner::loop() {
+    UIManager::setStatus(beaconsSeen == 0
+                              ? "Listening for first beacon..."
+                              : "Listening (next beacon due ~" + String(LORA_BEACON_PERIOD_S) + "s)...");
+
     int state = beaconRadio.receive(beaconBuf, kMaxBeaconLen);
     if (state != RADIOLIB_ERR_NONE) return; // timeout: nothing heard, keep waiting
 

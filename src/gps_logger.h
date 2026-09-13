@@ -15,6 +15,10 @@ namespace GpsLogger {
     bool hasFix();
     double latitude();
     double longitude();
+    // Satellites currently used in the fix computation (0 if unknown/no
+    // data yet) - handy to show progress while acquiring a fix, not just
+    // a flat "no fix" message.
+    int satellites();
     // ISO-ish "HH:MM:SS" UTC time string from the last valid GPS fix, or
     // "00:00:00" if no fix yet (falls back to millis()-based logging).
     String timeString();

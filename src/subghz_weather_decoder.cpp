@@ -134,6 +134,8 @@ bool SubGhzWeatherDecoder::begin() {
 }
 
 void SubGhzWeatherDecoder::loop() {
+    UIManager::setStatus("Listening for sensors...");
+
     static uint32_t lastDump = 0;
     if (millis() - lastDump < 500) return;
     lastDump = millis();

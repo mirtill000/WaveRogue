@@ -125,6 +125,8 @@ bool SubGhzSyncwordAnalyzer::begin() {
 }
 
 void SubGhzSyncwordAnalyzer::loop() {
+    UIManager::setStatus("Capturing preamble/sync...");
+
     static uint32_t lastDump = 0;
     if (millis() - lastDump < 500) return;
     lastDump = millis();
