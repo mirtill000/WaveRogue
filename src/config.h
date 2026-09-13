@@ -79,14 +79,17 @@
 // path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
 // is NOT selectable on this module - see subghz_rf_switch.cpp.
 // -----------------------------------------------------------------------
-// The "CS=5, confirmed working" assumption behind the earlier swap
-// experiment turned out to be unfounded - CC1101 was never actually
-// deeply verified (only "no Cap recognition error" early on, not a
-// checked RadioLib chip-version result), and CS=5 currently fails with
-// the exact same "CC1101 init failed, code -2" this project hit at the
-// very start. That reopens the Cap CC1101's own printed silkscreen
-// label (CC_CS=G6, NFC_CS=G5) as the more credible source - trying 6
-// for real now, not just as a throwaway diagnostic.
+// CONFIRMED via a clean test: the "CS=5, confirmed working" assumption
+// this project carried since its very first CC1101 bring-up was wrong -
+// CC1101 had never actually been deeply verified (only "no Cap
+// recognition error", not a checked RadioLib chip-version result), and
+// CS=5 fails with "CC1101 init failed, code -2". Switching to 6 (per
+// the Cap CC1101's own printed silkscreen label, which reads
+// CC_CS=G6/NFC_CS=G5 - the opposite of what this project and M5's own
+// M5UnitUnified source both assumed) got the CC1101 radio actually
+// initializing (Sub-GHz Tools > Raw Sniffer). This also means the
+// NFC Reader/Writer module's entire "hardware fault" conclusion was
+// premature - see NFC_CS_PIN below and README's NFC Tools section.
 #define SUBGHZ_CS_PIN      6
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
 #define SUBGHZ_RF_SW0_PIN  13   // CC1101_RF_SW0 - antenna band select (see subghz_rf_switch.h)
@@ -101,12 +104,16 @@
 // NFC (ST25R3916) - the Cap CC1101 module doesn't just carry a CC1101:
 // it also has an ST25R3916 NFC/RFID front-end on the SAME Cap-Bus slot,
 // sharing the SAME SPI bus (SCK/MOSI/MISO) as the CC1101 above, on its
-// own CS (G6) and IRQ (G4) lines. Driven via M5Stack's own M5UnitUnified
-// + M5Unit-NFC stack (m5::unit::CapCC1101NFC), whose constructor and
-// wiring::addSPI() helper already know those pins and the shared bus -
-// nothing to define here for them. The one pin WaveRogue still manages
-// itself:
+// own CS and IRQ (G4) lines. Driven via M5Stack's own M5UnitUnified +
+// M5Unit-NFC stack (m5::unit::CapCC1101NFC), whose wiring::addSPI()
+// helper already knows the shared bus pins. Its CS defaults internally
+// to G6 (M5's own hardcoded assumption) - but this module's own printed
+// silkscreen label reads NFC_CS=G5 (confirmed by CC1101 above actually
+// being on G6, opposite to every prior assumption), so nfc_reader.cpp
+// explicitly overrides it via CapCC1101NFC's constructor argument
+// instead of trusting the library default.
 // -----------------------------------------------------------------------
+#define NFC_CS_PIN 5
 // M5Stack's own CapCC1101 driver declares a POWER_EN line on this pin
 // for the ST25R3916, numerically matching LORA_RST_PIN above - not a
 // conflict, since the LoRa and CC1101 caps are physically mutually

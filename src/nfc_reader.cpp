@@ -23,7 +23,13 @@ using m5::nfc::a::mifare::classic::get_sector_trailer_block_from_sector;
 
 namespace {
     m5::unit::UnitUnified Units;
-    m5::unit::CapCC1101NFC unit{};   // Cap CC1101's ST25R3916 front-end, over SPI
+    // CapCC1101NFC defaults its CS pin to G6 internally (M5's own
+    // hardcoded assumption), but this Cap CC1101 module's own printed
+    // silkscreen label reads NFC_CS=G5 - confirmed indirectly by the
+    // CC1101 itself actually being on G6, opposite to every earlier
+    // assumption (see config.h). Override it explicitly rather than
+    // relying on the library default.
+    m5::unit::CapCC1101NFC unit{NFC_CS_PIN};
     m5::nfc::NFCLayerA nfc_a{unit};
 
     bool sdReady = false;
@@ -202,30 +208,28 @@ bool NfcReader::begin() {
     pinMode(NFC_POWER_EN_PIN, OUTPUT);
     digitalWrite(NFC_POWER_EN_PIN, HIGH);
 
-    // SPI mode 1 (CPOL=0, CPHA=1). addSPI() resolves the shared Cap-Bus
-    // SPI pins (SCK/MOSI/MISO) itself via M5Unified's board profile
-    // (M5.getBoard()/M5.getPin()), and the unit's own constructor
-    // already knows its CS/IRQ pins (G6/G4) - nothing to configure
-    // manually here, PROVIDED M5Unified actually recognizes this board
-    // and resolves the Cap-Bus pins correctly. Print what it resolved so
-    // a failure here is diagnosable instead of a bare "init failed".
+    // SPI mode 1 (CPOL=0, CPHA=1), 10 MHz - matches M5's own reference
+    // CapCC1101NFC setup. addSPI() resolves the shared Cap-Bus SPI pins
+    // (SCK/MOSI/MISO) itself via M5Unified's board profile
+    // (M5.getBoard()/M5.getPin()); the unit's CS is passed explicitly
+    // above (NFC_CS_PIN) rather than trusting the library's default.
+    // Print what addSPI() resolved so a failure here is diagnosable
+    // instead of a bare "init failed".
+    //
+    // The earlier "drop to 1 MHz" experiment here (when every driver
+    // attempt read a different garbage byte from IC_IDENTITY regardless
+    // of speed) turned out to be chasing the wrong culprit: the real
+    // issue was CS itself pointing at the CC1101, not the ST25R3916 -
+    // every "NFC" register read was actually landing on the CC1101's own
+    // status byte, which explains the inconsistent-but-repeatable
+    // garbage far better than a clock-speed/signal-integrity theory
+    // ever did. Back to 10 MHz now that CS is corrected.
     auto spiPinInfo = m5::unit::wiring::spiPins();
     UIManager::printLine("Board: 0x" + String((unsigned)M5.getBoard(), HEX));
     UIManager::printLine("SPI: sck=" + String(spiPinInfo.sclk) + " miso=" + String(spiPinInfo.miso) +
                           " mosi=" + String(spiPinInfo.mosi));
 
-    // Clock dropped from M5's own reference speed (10 MHz) to 1 MHz:
-    // at 10 MHz, M5's own chip-ID check read the IC_IDENTITY register as
-    // type=03,rev=06 (raw byte 0x1E) - garbage, and RFAL's earlier
-    // attempt at the same 10 MHz read back 0x00 outright. A raw,
-    // library-independent 1 MHz SPI probe run earlier against this same
-    // register consistently read back a valid-looking ID (0x2a) on two
-    // separate occasions. Three different raw values across three SPI
-    // setups reading the same register looks like a signal-integrity
-    // problem at higher clock speeds on this specific wiring, not a
-    // software bug - try the speed that has actually produced a
-    // plausible reading so far.
-    bool spiAdded = m5::unit::wiring::addSPI(Units, unit, 1000000, 1);
+    bool spiAdded = m5::unit::wiring::addSPI(Units, unit, 10000000, 1);
     UIManager::printLine(String("addSPI: ") + (spiAdded ? "ok" : "FAILED"));
     bool unitsBegan = spiAdded && Units.begin();
     if (spiAdded) {
