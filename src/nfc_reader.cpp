@@ -274,30 +274,32 @@ bool NfcReader::begin() {
     nfcSPI.begin(NFC_SPI_SCK_PIN, NFC_SPI_MISO_PIN, NFC_SPI_MOSI_PIN, NFC_CS_PIN);
     delay(50); // let the chip's power/SPI lines settle before probing it
 
+    // Manual, RFAL-independent SPI probe of the same IC_IDENTITY register
+    // (0x3F): bit7=0,bit6=1 selects a register READ, bits5-0 are the
+    // address, per the ST25R3916 SPI framing. This bypasses RFAL's whole
+    // init sequence (SET_DEFAULT command, interrupt setup, etc.) - if
+    // this ALSO reads back 0x00, the problem is upstream of the library
+    // entirely (wiring/CS/IRQ), not something specific to how RFAL talks
+    // to a chip that shares its SPI bus with the CC1101.
+    nfcSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
+    digitalWrite(NFC_CS_PIN, LOW);
+    delayMicroseconds(5);
+    nfcSPI.transfer(0x40 | (ST25R3916_REG_IC_IDENTITY & 0x3F));
+    uint8_t manualProbeId = nfcSPI.transfer(0x00);
+    digitalWrite(NFC_CS_PIN, HIGH);
+    nfcSPI.endTransaction();
+    UIManager::printLine("Manual SPI probe: 0x" + String(manualProbeId, HEX));
+
     ReturnCode initErr = nfc.rfalNfcInitialize();
     if (initErr != ERR_NONE) {
         UIManager::printLine("ST25R3916 init failed:");
         UIManager::printLine(String(returnCodeToString(initErr)) + " (" + String(initErr) + ")");
 
         if (initErr == ERR_HW_MISMATCH) {
-            // rfalNfcInitialize() bailed because reading register 0x3F
-            // (IC_IDENTITY) didn't match the known ST25R3916/3916B type
-            // bits. That's ambiguous by itself: it fires identically
-            // whether a different chip is really there, OR the CS/IRQ
-            // wiring for THIS chip is bad and the register read just
-            // came back as noise (0x00/0xFF are the classic "nothing
-            // answered" values). Read it again directly and print the
-            // raw byte so which case this is stops being a guess.
             uint8_t rawId = 0;
             nfcHwReader.st25r3916ReadRegister(ST25R3916_REG_IC_IDENTITY, &rawId);
-            UIManager::printLine("Raw reg 0x3F = 0x" + String(rawId, HEX));
-            if (rawId == 0x00 || rawId == 0xFF) {
-                UIManager::printLine("-> looks like nothing");
-                UIManager::printLine("   answered (wiring/CS/IRQ)");
-            } else {
-                UIManager::printLine("-> chip responded, but");
-                UIManager::printLine("   with an unexpected ID");
-            }
+            UIManager::printLine("RFAL reg0x3F: 0x" + String(rawId, HEX) +
+                                  ((rawId == 0x00 || rawId == 0xFF) ? " (no answer)" : " (unexpected)"));
         }
 
         UIManager::printLine("Check: Cap CC1101 seated");
