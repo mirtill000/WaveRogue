@@ -1,9 +1,9 @@
 # WaveRogue
 
 RF security-auditing firmware for the **M5Stack Cardputer** (ESP32-S3),
-built with PlatformIO + Arduino. It provides 18 keyboard-navigable
+built with PlatformIO + Arduino. It provides 10 keyboard-navigable
 modules, organized into **LoRa Tools**, **Sub-GHz Tools**, and **NFC
-Tools** menus, for auditing LoRaWAN networks, simple sub-GHz (OOK/ASK/FSK)
+Tools** menus, for auditing LoRaWAN networks, simple sub-GHz (OOK/ASK)
 devices, and NFC-A/MIFARE Classic badges.
 
 ## ⚠️ Legal & ethical use
@@ -20,15 +20,16 @@ which actively tries to authenticate against a card's sectors using a
 small dictionary of widely-published default/well-known keys - only run
 it against badges/cards you own or are authorized to assess.
 
-Radio transmission (the Sub-GHz Replay Tester, and optionally referenced
-but not implemented in the Rogue Gateway module) is regulated in most
-countries — check your local rules (e.g. ETSI EN 300 220 in the EU, FCC
-Part 15 in the US) before enabling any TX path, and never transmit against
-equipment you don't own or lack permission to test. The Wi-Fi promiscuous
-(monitor-mode) capture used by the GWMP module is also subject to local
-wiretapping/interception law in many jurisdictions even though it's
-receive-only - only use it on networks you're authorized to assess. You
-are responsible for how you use this code.
+Every LoRa and Sub-GHz module is receive-only (the Rogue Gateway module
+only ever listens for Join-Requests; it never sends a spoofed
+Join-Accept). The Wi-Fi promiscuous (monitor-mode) capture used by the
+GWMP module is likewise receive-only, but is still subject to local
+wiretapping/interception law in many jurisdictions - only use it on
+networks you're authorized to assess. Radio transmission on licensed/ISM
+bands is still regulated in most countries regardless (e.g. ETSI EN 300
+220 in the EU, FCC Part 15 in the US) - keep that in mind if you extend
+any module with a TX path of your own. You are responsible for how you
+use this code.
 
 ## Hardware
 
@@ -122,14 +123,8 @@ src/
   lora_beacon_scanner.*          Class-B gateway beacon scanner
   gwmp_sniffer.*                 Wi-Fi promiscuous GWMP backhaul metadata sniffer
 
-  subghz_auditor.*               Raw sniffer + replay tester
-  subghz_static_code.*           Fixed/static-code legacy remote discovery
-  subghz_weather_decoder.*       Weather/temp sensor decoder (Nexus-style dictionary)
-  subghz_wmbus_scanner.*         Wireless M-Bus smart meter scanner
-  subghz_bug_detector.*          Analog bug / continuous-carrier detector
-  subghz_pocsag_scanner.*        POCSAG pager scanner
-  subghz_syncword_analyzer.*     Preamble/sync-word fingerprinting
-  subghz_band_scanner.*          Multi-frequency sweep + packet sniffer
+  subghz_audit.*                  Sub-GHz Audit: band-scoped sweep/lock/decode/repeat-detect
+  subghz_rf_switch.*              Cap CC1101 antenna-path (RF_SW0) selection
 
   nfc_reader.*                   NFC-A reader/writer + MIFARE Classic default-key auditor
 ```
@@ -192,67 +187,48 @@ src/
 
 ## Sub-GHz Tools
 
-1. **Raw Sniffer (OOK/ASK)** — puts the CC1101 in RadioLib's "direct
-   mode" and times edges in an interrupt to capture pulse widths without
-   assuming any particular protocol. A decoding *aid* (raw widths + a
-   rough ASCII visualization), not a full decoder.
+A single **Sub-GHz Audit** module. On entry it asks which ISM-band preset
+to sniff — **315, 433, 868, or 915 MHz** — then sweeps that band alone
+looking for activity:
 
-2. **Replay Vulnerability Tester** — records one button-press worth of
-   raw pulses, then, on Enter, re-transmits the exact recorded waveform.
-   Use only against your own receiver, to check whether it accepts a
-   replayed fixed code (i.e., lacks a rolling code).
+- **Sweep & lock** — hops across the band a short dwell at a time, the
+  same way a spectrum-analyzer-style scanner does; as soon as a channel
+  shows enough raw OOK/ASK edges to look like a real burst (not noise), it
+  locks on and captures the full pulse train, live, until the channel goes
+  quiet again.
+- **Continuous-carrier watch** — runs at the same time as the sweep/lock
+  logic above: if RSSI stays above threshold far longer than any data
+  burst would, that's flagged separately as a possible active analog
+  bug/transmitter rather than a remote or sensor.
+- **Generic PWM fixed-code decode** — every captured burst is run through
+  a decoder for the short/long-pulse-with-sync-gap shape used by cheap
+  PT2262/EV1527-style remotes and their countless clones. A clean match
+  decodes to a bit value; anything else is kept and reported as an
+  unrecognized raw pulse train (still fully captured, just not decoded).
+- **Repeat / rolling-code detection** — each capture on a given channel is
+  compared against recent captures on that *same* channel: an exact
+  repeat across separate button presses means a static/fixed code
+  (100% replay-vulnerable); a different payload every time suggests a
+  rolling code instead.
 
-3. **Static-Code Discovery** — captures each button-press as a separate
-   timing "session" (segmented by the gap when you release the button,
-   not the short gaps between a remote's own repeats within one press)
-   and flags when two SEPARATE presses produce the identical code: proof
-   of a fixed/static code, 100% vulnerable to replay.
+Every finding (capture, repeat, continuous carrier) is appended to
+`subghz_audit_log.csv` on the SD card. Tune the sweep step/dwell,
+detection thresholds, and history size via the `SUBGHZ_AUDIT_*` macros in
+`config.h`.
 
-4. **Weather/TPMS Decoder** — an rtl_433-style dictionary decoder with one
-   fully-worked entry: the very common "Nexus"-style temp/humidity sensor
-   protocol (sold under many rebrands). Falls back to a raw pulse dump for
-   anything unrecognized, TPMS included (TPMS needs FSK + vendor-specific
-   framing, out of scope for the OOK/PWM decoder here).
+**315 MHz caveat:** the Cap CC1101's antenna switch (`RF_SW0`) only
+exposes a 433 MHz path and an 868/915 MHz path in software (see
+`subghz_rf_switch.h`) — there's no dedicated matching path for 315 MHz on
+this hardware, so that preset tunes through the 433 MHz path instead, with
+reduced range/sensitivity as a result.
 
-5. **Wireless M-Bus Scanner** — tunes to 868.95 MHz S-mode, Manchester-
-   decodes the raw signal, and parses the fixed header every smart meter
-   telegram starts with: manufacturer code, serial/device type, and a
-   best-effort read of the CI-field's encryption mode (flagging meters
-   that transmit with **no encryption**).
-
-6. **Analog Bug Detector** — sweeps a configurable frequency list and
-   flags a **continuous carrier** (unlike the short bursts of digital OOK/
-   FSK devices) as a possible active analog transmitter. Note: the CC1101
-   only tunes 300-348/387-464/779-928 MHz - classic 49 MHz/FM-broadcast/
-   VHF bugs are physically out of reach of this hardware.
-
-7. **POCSAG Pager Scanner** — NRZ-FSK bit recovery + POCSAG frame-sync
-   detection, with best-effort numeric-message decode. Alphanumeric
-   decode and FLEX are explicitly not implemented (documented as a known
-   limitation, not silently wrong) - unrecognized/alpha codewords still
-   show as raw hex so you can see the traffic exists. **Set
-   `POCSAG_FREQ_MHZ` in config.h to a frequency you're actually authorized
-   to audit** - paging frequencies are licensed and vary by country/site.
-
-8. **Sync-Word Analyzer** — auto-detects the capture's timing unit,
-   reconstructs a candidate 32-bit preamble/sync fingerprint (in both
-   normal and bit-reversed form), and checks it against a small reference
-   table (e.g. the CC1101's own factory-default sync word) to help
-   classify unknown hardware by vendor. Extend the table in
-   `subghz_syncword_analyzer.cpp` with your own findings.
-
-9. **Band Scanner (Multi-Freq)** — sweeps a configurable frequency range
-   (default: the EU 433 MHz SRD sub-band, 433.05-434.79 MHz) with a short
-   dwell per channel, watching raw edge timing the same way the Raw
-   Sniffer does. As soon as a channel shows enough edges to look like a
-   real modulated transmission, it locks on and displays the captured
-   pulses live; once that channel goes quiet it resumes sweeping from the
-   next one. Complementary to (not overlapping with) the Analog Bug
-   Detector: this looks for *packets* (edge-rich bursts), that one looks
-   for *continuous carriers* (few/no edges) - a device transmitting
-   somewhere in the range without you knowing the exact channel shows up
-   here, not there. Change `SUBGHZ_BANDSCAN_*` in `config.h` to scan a
-   different range/dwell.
+The overall sweep/lock/decode/repeat-detect approach follows the same
+general design used by other Sub-GHz auditing tools for Cardputer-class
+hardware (e.g. the CC1101 tooling in
+[Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project)) — the
+architecture and general PT2262/EV1527 timing knowledge are independently
+implemented here rather than copied, since that project's repository
+carries no explicit open-source license.
 
 ## NFC Tools
 
@@ -333,7 +309,7 @@ layout differs):
 |-----|--------|
 | `;` | Up (menu navigation) |
 | `.` | Down (menu navigation) |
-| Enter | Select menu item / trigger a replay transmission |
+| Enter | Select menu item |
 | `` ` `` | Back/ESC — leave the current module, or go up one menu level |
 
 Menus scroll automatically (▲/▼ indicators) once there are more items than
@@ -390,13 +366,11 @@ first thing to try if dependency resolution looks stale.
 
 ## A note on scope and honesty
 
-Several of the newer Sub-GHz modules (weather decode, wM-Bus, POCSAG,
-sync-word analysis) implement real signal-processing techniques (NRZ/
-Manchester bit recovery from edge timing, frame-sync search, etc.) but,
-without lab hardware to validate every timing constant against, are
-best described as solid starting points rather than certified decoders.
-Each module's header comment is explicit about what's verified vs.
-best-effort, and every one falls back to showing raw captured data rather
-than silently failing when its specific decode doesn't match - so the
-tool stays useful (and honest about its limits) even on signals outside
-what it currently recognizes.
+Sub-GHz Audit's PWM fixed-code decoder implements a real signal-processing
+technique (locating a sync gap, then classifying short/long pulse pairs)
+but, without lab hardware to validate every timing constant against, is
+best described as a solid starting point rather than a certified decoder.
+It falls back to showing the raw captured pulse train rather than silently
+failing when a burst doesn't match its expected shape - so the tool stays
+useful (and honest about its limits) on signals outside what it currently
+recognizes.

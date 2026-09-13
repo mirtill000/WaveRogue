@@ -2,13 +2,13 @@
 // WaveRogue - ui_manager.h
 //
 // Menu + scrolling log UI for the Cardputer's 240x135 TFT, driven by its
-// built-in keyboard. The tool now has 16 leaf modules, too many for one
-// flat screen, so navigation is two levels deep:
+// built-in keyboard. Navigation is two levels deep:
 //
-//   MENU_TOP  -->  MENU_LORA or MENU_SUBGHZ  -->  a leaf module
+//   MENU_TOP  -->  MENU_LORA, MENU_SUBGHZ (band select) or MENU_NFC  -->  a leaf module
 //
-// Both the top menu and the two category submenus are rendered by the same
-// generic, scrollable pollListMenu() widget.
+// Both the top menu and the category submenus (including the Sub-GHz
+// band-select list) are rendered by the same generic, scrollable
+// pollListMenu() widget.
 // =============================================================================
 #pragma once
 #include <Arduino.h>
@@ -29,16 +29,11 @@ enum class AppState {
     LORA_PLAINTEXT_DETECT,  // Module: Plaintext/Weak-Crypto Payload Detector
     LORA_GWMP_SNIFF,        // Module: Gateway Backhaul (GWMP) Metadata Extractor
 
-    // ---- Sub-GHz leaf modules ----
-    SUBGHZ_SNIFFER,          // Module: Raw Sniffer & Protocol Analyzer (OOK/ASK)
-    SUBGHZ_REPLAY,           // Module: Replay Vulnerability Tester
-    SUBGHZ_STATIC_CODE,      // Module: Static-Code Legacy System Discovery
-    SUBGHZ_WEATHER_TPMS,     // Module: Weather/TPMS Telemetry Decoder
-    SUBGHZ_WMBUS_SCAN,       // Module: Wireless M-Bus Smart Meter Scanner
-    SUBGHZ_BUG_DETECT,       // Module: Analog Bug / Carrier Detector
-    SUBGHZ_POCSAG_SCAN,      // Module: POCSAG/FLEX Pager Scanner
-    SUBGHZ_SYNCWORD_ANALYZER, // Module: Preamble/Sync-Word Analyzer
-    SUBGHZ_BAND_SCANNER,      // Module: Multi-Frequency Band Scanner
+    // ---- Sub-GHz leaf module ----
+    // MENU_SUBGHZ is the band-select list (315/433/868/915 MHz); picking a
+    // band enters this single leaf state, with the chosen band threaded
+    // through main.cpp into SubGhzAudit::begin().
+    SUBGHZ_AUDIT,            // Module: Sub-GHz Audit (band-scoped sweep/lock/decode)
 
     // ---- NFC leaf modules ----
     NFC_READER               // Module: NFC Reader/Writer + Mifare default-key auditor

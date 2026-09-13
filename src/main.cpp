@@ -14,14 +14,7 @@
 #include "lora_auditor.h"
 #include "lora_beacon_scanner.h"
 #include "gwmp_sniffer.h"
-#include "subghz_auditor.h"
-#include "subghz_static_code.h"
-#include "subghz_weather_decoder.h"
-#include "subghz_wmbus_scanner.h"
-#include "subghz_bug_detector.h"
-#include "subghz_pocsag_scanner.h"
-#include "subghz_syncword_analyzer.h"
-#include "subghz_band_scanner.h"
+#include "subghz_audit.h"
 #include "nfc_reader.h"
 
 namespace {
@@ -50,25 +43,17 @@ namespace {
     };
     constexpr int kLoraMenuCount = sizeof(kLoraMenuItems) / sizeof(kLoraMenuItems[0]);
 
+    // Sub-GHz Audit is one leaf module (AppState::SUBGHZ_AUDIT) parameterized
+    // by which ISM band the operator picks here - the label list doubles as
+    // the Band enum order, so index == (int)SubGhzAudit::Band.
     const char* kSubghzMenuItems[] = {
-        "1. Raw Sniffer (OOK/ASK)",
-        "2. Replay Vuln. Tester",
-        "3. Static-Code Discovery",
-        "4. Weather/TPMS Decoder",
-        "5. Wireless M-Bus Scanner",
-        "6. Analog Bug Detector",
-        "7. POCSAG Pager Scanner",
-        "8. Sync-Word Analyzer",
-        "9. Band Scanner (Multi-Freq)",
-    };
-    const AppState kSubghzModuleStates[] = {
-        AppState::SUBGHZ_SNIFFER,      AppState::SUBGHZ_REPLAY,
-        AppState::SUBGHZ_STATIC_CODE,  AppState::SUBGHZ_WEATHER_TPMS,
-        AppState::SUBGHZ_WMBUS_SCAN,   AppState::SUBGHZ_BUG_DETECT,
-        AppState::SUBGHZ_POCSAG_SCAN,  AppState::SUBGHZ_SYNCWORD_ANALYZER,
-        AppState::SUBGHZ_BAND_SCANNER,
+        "1. 315 MHz",
+        "2. 433 MHz",
+        "3. 868 MHz",
+        "4. 915 MHz",
     };
     constexpr int kSubghzMenuCount = sizeof(kSubghzMenuItems) / sizeof(kSubghzMenuItems[0]);
+    SubGhzAudit::Band selectedSubghzBand = SubGhzAudit::Band::BAND_433;
 
     const char* kNfcMenuItems[] = {
         "1. NFC Reader/Writer",
@@ -93,6 +78,7 @@ namespace {
                 return AppState::MENU_LORA;
             case AppState::NFC_READER:
                 return AppState::MENU_NFC;
+            case AppState::SUBGHZ_AUDIT:
             default:
                 return AppState::MENU_SUBGHZ;
         }
@@ -139,43 +125,9 @@ namespace {
                 GwmpSniffer::begin();
                 break;
 
-            case AppState::SUBGHZ_SNIFFER:
-                UIManager::drawHeader("Sub-GHz Sniffer");
-                SubGhzAuditor::begin();
-                SubGhzAuditor::sniffBegin();
-                break;
-            case AppState::SUBGHZ_REPLAY:
-                UIManager::drawHeader("Sub-GHz Replay Test");
-                SubGhzAuditor::begin();
-                SubGhzAuditor::replayBegin();
-                break;
-            case AppState::SUBGHZ_STATIC_CODE:
-                UIManager::drawHeader("Static-Code Discovery");
-                SubGhzStaticCode::begin();
-                break;
-            case AppState::SUBGHZ_WEATHER_TPMS:
-                UIManager::drawHeader("Weather/TPMS Decoder");
-                SubGhzWeatherDecoder::begin();
-                break;
-            case AppState::SUBGHZ_WMBUS_SCAN:
-                UIManager::drawHeader("Wireless M-Bus Scan");
-                SubGhzWmbusScanner::begin();
-                break;
-            case AppState::SUBGHZ_BUG_DETECT:
-                UIManager::drawHeader("Analog Bug Detector");
-                SubGhzBugDetector::begin();
-                break;
-            case AppState::SUBGHZ_POCSAG_SCAN:
-                UIManager::drawHeader("POCSAG Pager Scan");
-                SubGhzPocsagScanner::begin();
-                break;
-            case AppState::SUBGHZ_SYNCWORD_ANALYZER:
-                UIManager::drawHeader("Sync-Word Analyzer");
-                SubGhzSyncwordAnalyzer::begin();
-                break;
-            case AppState::SUBGHZ_BAND_SCANNER:
-                UIManager::drawHeader("Band Scanner");
-                SubGhzBandScanner::begin();
+            case AppState::SUBGHZ_AUDIT:
+                UIManager::drawHeader((String("Sub-GHz Audit - ") + SubGhzAudit::bandLabel(selectedSubghzBand)).c_str());
+                SubGhzAudit::begin(selectedSubghzBand);
                 break;
 
             case AppState::NFC_READER:
@@ -211,32 +163,8 @@ namespace {
                 GwmpSniffer::end();
                 break;
 
-            case AppState::SUBGHZ_SNIFFER:
-                SubGhzAuditor::sniffEnd();
-                break;
-            case AppState::SUBGHZ_REPLAY:
-                SubGhzAuditor::replayEnd();
-                break;
-            case AppState::SUBGHZ_STATIC_CODE:
-                SubGhzStaticCode::end();
-                break;
-            case AppState::SUBGHZ_WEATHER_TPMS:
-                SubGhzWeatherDecoder::end();
-                break;
-            case AppState::SUBGHZ_WMBUS_SCAN:
-                SubGhzWmbusScanner::end();
-                break;
-            case AppState::SUBGHZ_BUG_DETECT:
-                SubGhzBugDetector::end();
-                break;
-            case AppState::SUBGHZ_POCSAG_SCAN:
-                SubGhzPocsagScanner::end();
-                break;
-            case AppState::SUBGHZ_SYNCWORD_ANALYZER:
-                SubGhzSyncwordAnalyzer::end();
-                break;
-            case AppState::SUBGHZ_BAND_SCANNER:
-                SubGhzBandScanner::end();
+            case AppState::SUBGHZ_AUDIT:
+                SubGhzAudit::end();
                 break;
 
             case AppState::NFC_READER:
@@ -258,15 +186,7 @@ namespace {
             case AppState::LORA_PLAINTEXT_DETECT:    LoraAuditor::plaintextScanLoop(); break;
             case AppState::LORA_GWMP_SNIFF:          GwmpSniffer::loop(); break;
 
-            case AppState::SUBGHZ_SNIFFER:           SubGhzAuditor::sniffLoop(); break;
-            case AppState::SUBGHZ_REPLAY:            SubGhzAuditor::replayLoop(); break;
-            case AppState::SUBGHZ_STATIC_CODE:       SubGhzStaticCode::loop(); break;
-            case AppState::SUBGHZ_WEATHER_TPMS:      SubGhzWeatherDecoder::loop(); break;
-            case AppState::SUBGHZ_WMBUS_SCAN:        SubGhzWmbusScanner::loop(); break;
-            case AppState::SUBGHZ_BUG_DETECT:        SubGhzBugDetector::loop(); break;
-            case AppState::SUBGHZ_POCSAG_SCAN:       SubGhzPocsagScanner::loop(); break;
-            case AppState::SUBGHZ_SYNCWORD_ANALYZER: SubGhzSyncwordAnalyzer::loop(); break;
-            case AppState::SUBGHZ_BAND_SCANNER:      SubGhzBandScanner::loop(); break;
+            case AppState::SUBGHZ_AUDIT:              SubGhzAudit::loop(); break;
 
             case AppState::NFC_READER:               NfcReader::loop(); break;
             default:
@@ -318,9 +238,10 @@ void loop() {
                 UIManager::resetMenu();
                 break;
             }
-            int sel = UIManager::pollListMenu("Sub-GHz Tools", kSubghzMenuItems, kSubghzMenuCount);
+            int sel = UIManager::pollListMenu("Sub-GHz Audit - band?", kSubghzMenuItems, kSubghzMenuCount);
             if (sel >= 0) {
-                currentState = kSubghzModuleStates[sel];
+                selectedSubghzBand = (SubGhzAudit::Band)sel;
+                currentState = AppState::SUBGHZ_AUDIT;
                 enterModule(currentState);
             }
             break;

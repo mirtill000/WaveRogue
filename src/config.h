@@ -68,16 +68,18 @@
 // Cardputer Cap-Bus add-on. It plugs into the SAME physical Cap-Bus slot
 // (and therefore the same CS/SPI pins) as the "Cap LoRa-1262" module
 // above - the two are mutually exclusive on real hardware, you swap
-// whichever one you need. GDO0 is used both as the RX "data available"
-// interrupt pin (OOK/ASK raw pulse capture) and, in TX mode, as the
-// bit-banged output pin for replay. This module has no GDO2 broken out
-// on the Cap-Bus header, so RADIOLIB_NC is passed for it in code.
+// whichever one you need. GDO0 is used as the RX "data available"
+// interrupt pin (OOK/ASK raw pulse capture). This module has no GDO2
+// broken out on the Cap-Bus header, so RADIOLIB_NC is passed for it in
+// code.
 //
 // RF_SW0 selects the antenna path per M5Stack's published truth table;
 // RF_SW1 isn't broken out here (fixed in hardware), so only two of the
-// three documented bands are actually reachable: RF_SW0=LOW -> 433MHz
-// path, RF_SW0=HIGH -> 868/915MHz path. 315MHz (which needs RF_SW1=LOW)
-// is NOT selectable on this module - see subghz_rf_switch.cpp.
+// three documented bands have a dedicated antenna-matching path:
+// RF_SW0=LOW -> 433MHz path, RF_SW0=HIGH -> 868/915MHz path. 315MHz
+// (which needs RF_SW1=LOW) has no such path - Sub-GHz Audit still tunes
+// there through the 433MHz path (see subghz_rf_switch.cpp), with
+// reduced range/sensitivity as a result.
 // -----------------------------------------------------------------------
 #define SUBGHZ_CS_PIN      5
 #define SUBGHZ_GDO0_PIN    15   // CC1101_G0
@@ -128,8 +130,7 @@
 
 // -----------------------------------------------------------------------
 // RF parameters. LoRaWAN region defaults to EU868; change to 915.0 for
-// US915, 923.0/920.9 for AS923, etc. Sub-GHz default targets the common
-// 433.92 MHz OOK/ASK ISM band used by garage doors, weather stations, etc.
+// US915, 923.0/920.9 for AS923, etc.
 // -----------------------------------------------------------------------
 #define LORA_FREQ_MHZ         868.1f
 #define LORA_BANDWIDTH_KHZ    125.0f
@@ -138,57 +139,59 @@
 #define LORA_SYNC_WORD        0x34   // Public LoRaWAN sync word
 #define LORA_TX_POWER_DBM     2      // Only relevant for Module 3's optional TX
 
-#define SUBGHZ_FREQ_MHZ       433.92f
-
-// =============================================================================
-// Sub-GHz: Multi-Frequency Band Scanner
-// =============================================================================
-// Sweeps a configurable frequency range, dwelling briefly on each
-// channel, and locks onto any channel where enough raw edges show up
-// during the dwell to look like an actual modulated transmission (as
-// opposed to noise, or a continuous unmodulated carrier - see the Analog
-// Bug Detector for that case). Default range covers the common license-
-// free EU 433 MHz SRD sub-band (ETSI 433.05-434.79 MHz); change it to
-// scan a different band your antenna/hardware actually covers.
-#define SUBGHZ_BANDSCAN_START_MHZ     433.05f
-#define SUBGHZ_BANDSCAN_END_MHZ       434.79f
-#define SUBGHZ_BANDSCAN_STEP_MHZ      0.10f
-#define SUBGHZ_BANDSCAN_DWELL_MS      200
-// Edges captured during one dwell window above this many means "this
-// looks like a real transmission, not just noise" - lock onto it.
-#define SUBGHZ_BANDSCAN_MIN_PULSES    6
-// How long a locked channel has to stay quiet before the scanner decides
-// the transmission ended and resumes sweeping (from the next channel).
-#define SUBGHZ_BANDSCAN_LOCK_QUIET_MS 800
-
-// =============================================================================
-// Sub-GHz: Weather/TPMS Telemetry Decoder
-// =============================================================================
-// This is a dictionary-based decoder in the spirit of rtl_433, but with a
-// SINGLE fully-implemented entry rather than rtl_433's ~200 protocols:
-// the very common "Nexus"-style temperature/humidity sensor protocol
-// (sold under many rebrands - Bresser, Digitech XC0348, Optex 990045,
-// Number8, Weather Star, and others - all sharing the same 36-bit
-// PWM-encoded frame). Extend NEXUS_* below or add another dictionary
-// entry in subghz_weather_decoder.cpp for other sensors.
-//
-// TPMS (tire-pressure sensors) are NOT decoded here: they almost always
-// use FSK with manufacturer-specific framing (Schrader, Continental,
-// etc. all differ), which needs a different CC1101 modulation setup than
-// the OOK/PWM decode below - the module falls back to a raw capture dump
-// for anything it doesn't recognize, TPMS included.
-#define NEXUS_BIT_HIGH_US       500   // fixed "sync" HIGH pulse per bit
-#define NEXUS_GAP_ZERO_US       1000  // LOW gap encoding bit value 0
-#define NEXUS_GAP_ONE_US        2000  // LOW gap encoding bit value 1
-#define NEXUS_GAP_TOLERANCE_US  300   // +/- matching tolerance
-#define NEXUS_FRAME_BITS        36
-
 // Wardriving CSV log filename (Module 2)
 #define WARDRIVE_LOG_PATH "/wardriving_log.csv"
 // Rogue-gateway join-attempt log filename (Module 3)
 #define ROGUE_GW_LOG_PATH "/join_attempts_log.csv"
 
-// Sub-GHz raw capture buffer size (number of pulse edges), Module 4/5.
+// =============================================================================
+// Sub-GHz Audit
+// =============================================================================
+// Sweeps whichever ISM-band preset the operator picks (315/433/868/
+// 915 MHz - see subghz_audit.h), dwelling briefly on each channel.
+// Two things can trigger a finding on a channel:
+//   - Enough raw OOK/ASK edges during one dwell to look like an actual
+//     burst transmission (as opposed to noise) - the module locks on and
+//     captures the full pulse train.
+//   - RSSI staying above threshold continuously for longer than a data
+//     burst would - flagged as a possible continuous-carrier transmitter
+//     (an active bug, rather than a remote/sensor).
+// A captured burst is run through a generic short/long-pulse ("PWM
+// fixed-code") decoder - the pattern used by cheap PT2262/EV1527-style
+// remotes and countless clones - falling back to a raw pulse dump if it
+// doesn't decode cleanly. Each capture is compared against recent
+// history on the same channel to flag an exact repeat (static/fixed
+// code, 100% replay-vulnerable) versus a different payload every time
+// (possible rolling code).
+#define SUBGHZ_AUDIT_STEP_MHZ            0.10f
+#define SUBGHZ_AUDIT_DWELL_MS            200
+// Edges captured during one dwell window above this many means "this
+// looks like a real transmission, not just noise" - lock onto it.
+#define SUBGHZ_AUDIT_MIN_PULSES          6
+// How long a locked channel has to stay quiet before the audit decides
+// the transmission ended and resumes sweeping (from the next channel).
+#define SUBGHZ_AUDIT_LOCK_QUIET_MS       800
+// RSSI level, and how long it must be continuously exceeded, to flag a
+// channel as a possible continuous-carrier transmitter rather than a
+// data burst.
+#define SUBGHZ_AUDIT_RSSI_THRESHOLD_DBM  -70.0f
+#define SUBGHZ_AUDIT_CARRIER_MIN_DURATION_MS 2500
+// How many recent distinct captures (per channel) to remember for
+// repeat-detection, how much per-pulse timing jitter (microseconds) to
+// tolerate when comparing two raw captures as "the same" code, and the
+// per-capture buffer size used both for that comparison and for the PWM
+// decoder.
+#define SUBGHZ_AUDIT_HISTORY_SIZE        12
+#define SUBGHZ_AUDIT_MATCH_TOLERANCE_US  150
+#define SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE 256
+// Findings (captures, repeats, continuous carriers) are appended here.
+#define SUBGHZ_AUDIT_LOG_PATH "/subghz_audit_log.csv"
+
+// Live ISR edge-capture buffer size (number of pulse edges) while a
+// channel is locked - can hold a longer burst than what actually gets
+// stored into history/decoded (SUBGHZ_AUDIT_MAX_PULSES_PER_CAPTURE
+// above), since a button press often repeats the same code several
+// times back-to-back before going quiet.
 #define SUBGHZ_MAX_PULSES 1024
 
 // =============================================================================
@@ -250,84 +253,3 @@
 // gateway, but works without knowing its channel ahead of time).
 #define GWMP_WIFI_CHANNEL 0
 #define GWMP_CHANNEL_HOP_MS 500
-
-// =============================================================================
-// Sub-GHz: Static-Code Legacy System Discovery
-// =============================================================================
-// How many recent distinct captures to remember for repeat-detection, and
-// how much per-pulse timing jitter (in microseconds) to tolerate when
-// deciding two captures are "the same" code (cheap OOK transmitters are
-// not crystal-perfect, so exact microsecond equality is too strict).
-#define STATICCODE_HISTORY_SIZE 12
-#define STATICCODE_MATCH_TOLERANCE_US 150
-// A gap this long with no RF edges marks the end of one button-press
-// "session" (as opposed to the much shorter gaps between the several
-// back-to-back repeats a remote sends within a single press, which we
-// deliberately do NOT use as the comparison boundary - repeats within one
-// press are identical even for rolling-code remotes, so only comparing
-// across separate sessions actually tests for a static/fixed code).
-#define STATICCODE_SESSION_GAP_MS 300
-#define STATICCODE_MAX_PULSES_PER_SESSION 256
-
-// =============================================================================
-// Sub-GHz: Wireless M-Bus Smart Meter Scanner
-// =============================================================================
-// wM-Bus S-mode (most common for EU water/gas/heat meters) lives at
-// 868.95 MHz, Manchester-coded at 32.768 kbps. T-mode (electricity meters,
-// frequent-transmit) uses 868.3 MHz at 100 kbps, 3-out-of-6 coded. Only
-// S-mode is implemented here; T-mode decoding needs different framing.
-#define WMBUS_SMODE_FREQ_MHZ 868.95f
-#define WMBUS_TMODE_FREQ_MHZ 868.3f
-// Manchester "chip" (half-bit) duration at 32.768 kbps: 1/(2*32768) s.
-// NOTE: this is a fast, software-edge-timing-unfriendly rate - ESP32 GPIO
-// interrupt latency is usually fine, but expect occasional missed/garbled
-// edges on marginal signal, more so than the other (slower) OOK modules.
-#define WMBUS_MANCHESTER_UNIT_US 15
-#define WMBUS_MANCHESTER_TOLERANCE_US 6
-// Plausibility bounds used to accept a decode in the absence of a
-// verified CRC implementation (see subghz_wmbus_scanner.cpp header
-// comment for why exact CRC framing isn't attempted here).
-#define WMBUS_MIN_L_FIELD 9
-#define WMBUS_MAX_L_FIELD 250
-
-// =============================================================================
-// Sub-GHz: Analog Bug / Continuous-Carrier Detector
-// =============================================================================
-// IMPORTANT HARDWARE LIMITATION: the CC1101 only tunes 300-348 MHz,
-// 387-464 MHz and 779-928 MHz. Classic analog bugs/baby monitors in the
-// 49 MHz or FM-broadcast (88-108 MHz) bands, and true VHF (30-300 MHz)
-// devices, are physically outside what this radio can reach - that needs
-// a wideband SDR, not a CC1101. What IS in range: many cheap 433/434 MHz
-// and 900 MHz OOK/FSK audio/video bugs and FHSS baby monitors. This
-// module scans the frequency list below and flags a CONTINUOUS carrier
-// (RSSI staying above threshold for longer than a burst-y data
-// transmission would) as a possible active analog transmitter.
-#define BUG_SCAN_FREQ_LIST_MHZ { 390.0f, 433.92f, 434.42f, 446.0f, 869.525f, 915.0f }
-#define BUG_CARRIER_RSSI_THRESHOLD_DBM -70.0f
-#define BUG_CARRIER_MIN_DURATION_MS 2500
-#define BUG_SCAN_DWELL_MS 400
-
-// =============================================================================
-// Sub-GHz: POCSAG/FLEX Pager Scanner
-// =============================================================================
-// Paging frequencies are licensed and vary enormously by country/site
-// (hospitals and factories often run their own on-site paging transmitter
-// in the 148/154/173/453-470 MHz ranges depending on region). There is no
-// universal default - CHANGE THIS to the frequency you are authorized to
-// audit. The value below is only a common example in some deployments.
-#define POCSAG_FREQ_MHZ   466.230f
-#define POCSAG_BAUD        1200
-// Standard POCSAG frame synchronization codeword (BCH(31,21)-coded frame
-// sync), preceded by a long 0xAA... bit-sync preamble.
-#define POCSAG_FRAME_SYNC_CODEWORD 0x7CD215D8UL
-
-// =============================================================================
-// Sub-GHz: Preamble / Sync-Word Analyzer
-// =============================================================================
-// Small table of illustrative "known" sync words for operator reference
-// when classifying captured hardware. NOTE: several commonly-quoted
-// values (e.g. 0x2DD4, often cited for IEEE 802.15.4/Zigbee) belong to
-// radios that normally operate at 2.4 GHz - out of CC1101's tuning range
-// - and are listed here only as reference/education, not as something
-// this hardware can actually receive. Extend SyncWordAuditor's table in
-// subghz_syncword_analyzer.cpp with values relevant to your own targets.
